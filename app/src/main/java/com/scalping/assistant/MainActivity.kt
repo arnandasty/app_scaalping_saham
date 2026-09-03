@@ -95,7 +95,7 @@ class MainActivity : AppCompatActivity() {
 
         // Load Stockbit
         webView.loadUrl("https://stockbit.com/orderbook")
-        webViewMovers.loadUrl("https://stockbit.com/market/movers")
+        webViewMovers.loadUrl("https://stockbit.com/orderbook") // Muat halaman yg sama tapi versi Desktop (untuk curi sidebar Movers)
 
         // Mulai polling timer
         handler.post(sessionTimerRunnable)
@@ -134,6 +134,7 @@ class MainActivity : AppCompatActivity() {
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
         val customUserAgent = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+        val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -151,7 +152,7 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            userAgentString = customUserAgent
+            userAgentString = desktopUserAgent // Sulap: Menyamar jadi laptop agar dapat panel Movers!
         }
 
         val bridge = StockbitBridge(
