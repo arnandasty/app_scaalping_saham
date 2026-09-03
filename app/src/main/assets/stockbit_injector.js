@@ -156,16 +156,22 @@ window.autoFillTickers = function(tickers) {
                 while (curr && curr.tagName !== 'BODY' && maxDepth > 0) {
                     var txt = (curr.textContent || '').toLowerCase();
                     if (txt.indexOf('bid') >= 0 && txt.indexOf('offer') >= 0 && txt.indexOf('lot') >= 0) {
-                        // Cek berapa banyak input ticker di dalam kontainer ini
+                        // Cek berapa banyak ticker unik di dalam kontainer ini
                         var inputsInside = curr.querySelectorAll('input');
-                        var validTickersInside = 0;
-                        for(var k=0; k<inputsInside.length; k++){
+                        var uniqueTickers = {};
+                        var uniqueCount = 0;
+                        for (var k = 0; k < inputsInside.length; k++) {
                             var iv = (inputsInside[k].value || '').trim().toUpperCase();
-                            if (/^[A-Z]{3,5}$/.test(iv) && !isSkipWord(iv)) validTickersInside++;
+                            if (/^[A-Z]{3,5}$/.test(iv) && !isSkipWord(iv)) {
+                                if (!uniqueTickers[iv]) {
+                                    uniqueTickers[iv] = true;
+                                    uniqueCount++;
+                                }
+                            }
                         }
                         
-                        // Jika hanya ada 1 ticker, ini adalah widget spesifiknya!
-                        if (validTickersInside === 1) {
+                        // Jika hanya ada 1 ticker unik (meskipun ada banyak input yang isinya sama), ini adalah widget spesifiknya!
+                        if (uniqueCount === 1) {
                              widgetContainer = curr;
                         }
                         break;
