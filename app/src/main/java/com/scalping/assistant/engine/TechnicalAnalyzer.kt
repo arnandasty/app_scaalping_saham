@@ -76,8 +76,11 @@ object TechnicalAnalyzer {
         val recentLow = lows.takeLast(50).minOrNull() ?: priceToUse
         val fibLevels = calculateFibonacci(recentHigh, recentLow)
 
-        val nearestResistance = fibLevels.values.filter { it > priceToUse }.minOrNull() ?: (priceToUse * 1.03)
-        val nearestSupport = fibLevels.values.filter { it < priceToUse }.maxOrNull() ?: (priceToUse * 0.97)
+        val rawResistance = fibLevels.values.filter { it > priceToUse }.minOrNull() ?: (priceToUse * 1.03)
+        val rawSupport = fibLevels.values.filter { it < priceToUse }.maxOrNull() ?: (priceToUse * 0.97)
+
+        val nearestResistance = PriceFraction.roundUpToValidTick(rawResistance.toInt()).toDouble()
+        val nearestSupport = PriceFraction.roundDownToValidTick(rawSupport.toInt()).toDouble()
 
         var fibScore = 0
         val fib618 = fibLevels["61.8%"] ?: 0.0
