@@ -1,17 +1,13 @@
 (function() {
     try {
-        // === LANGKAH 1: Pastikan Panel Movers terbuka ===
-        // Cari tombol movers di kanan layar
+        // === LANGKAH 1: Klik tombol untuk buka panel Movers ===
         var moversBtn = document.querySelector('button[data-cy="right-menu-movers"]');
         if (moversBtn) {
-            // Klik tombol untuk buka/pastikan panel terbuka
             moversBtn.click();
         }
 
-        // === LANGKAH 2: Tunggu panel terbuka lalu scrape ===
-        setTimeout(function() {
-            scrapeMovers();
-        }, 800);
+        // === LANGKAH 2: Tunggu panel render lalu scrape ===
+        setTimeout(scrapeMovers, 600);
 
     } catch(e) {
         if (window.Android && window.Android.onMoversDebug) {
@@ -24,89 +20,78 @@
             var results = [];
             var seen = {};
 
-            // === STRATEGI 1: Cari di dalam widget-container ===
-            // Panel movers ada di div#widget-container
-            var widgetContainer = document.querySelector('#widget-container');
-            if (widgetContainer) {
-                // Cari semua elemen teks yang berisi ticker (3-5 huruf kapital)
-                var allElements = widgetContainer.querySelectorAll('span, div, td, p, strong, b');
-                allElements.forEach(function(el) {
-                    var text = (el.innerText || el.textContent || '').trim();
-                    // Ticker = 2-5 huruf kapital saja (tidak boleh ada spasi atau angka)
-                    if (/^[A-Z]{2,5}$/.test(text) && !seen[text]) {
-                        // Blacklist kata umum bukan ticker
-                        var skip = ['TOP','ALL','BUY','LOT','VAL','VOL','SELL','EDIT','LOAD',
-                                    'MORE','MENU','SAVE','LIKE','NEXT','BACK','HOME','LIVE',
-                                    'OPEN','HIGH','PREV','FREQ','GAIN','LOSS','NICE'];
-                        if (skip.indexOf(text) === -1) {
-                            seen[text] = true;
+            // === STRATEGI UTAMA: Ambil ticker dari logo perusahaan ===
+            // src = ".../logos/companies/VRNA.png", alt = "VRNA"
+            // Ini adalah selector paling stabil — tidak bergantung pada CSS class
+            var container = document.querySelector('#widget-container');
+            var scope = container || document;
 
-                            // Coba ambil harga dari elemen saudara
-                            var parent = el.parentElement;
-                            var price = 0;
-                            var changePct = 0;
+            var logoImgs = scope.querySelectorAll('img[src*="/logos/companies/"]');
+            logoImgs.forEach(function(img) {
+                // Ambil ticker dari alt attribute (selalu berisi nama ticker)
+                var ticker = (img.getAttribute('alt') || '').trim().toUpperCase();
 
-                            if (parent) {
-                                // Cari angka yang bisa jadi harga
-                                var siblings = parent.querySelectorAll('span, div');
-                                siblings.forEach(function(sib) {
-                                    var t = (sib.innerText || '').replace(/[^\d.,\-+%]/g, '').trim();
-                                    var n = parseFloat(t.replace(',', ''));
-                                    if (!isNaN(n) && n >= 50 && n <= 99000 && price === 0) {
-                                        price = Math.round(n);
-                                    }
-                                    // Cari persentase
-                                    if (t.includes('%')) {
-                                        var pct = parseFloat(t.replace('%', '').replace(',', '.'));
-                                        if (!isNaN(pct) && Math.abs(pct) < 50) {
-                                            changePct = pct;
-                                        }
-                                    }
-                                });
-                            }
+                // Validasi format ticker IDX (2-5 huruf kapital)
+                if (!ticker || !/^[A-Z]{2,5}$/.test(ticker) || seen[ticker]) return;
+                seen[ticker] = true;
 
-                            results.push({
-                                ticker: text,
-                                lastPrice: price,
-                                changePercent: changePct
-                            });
+                var price = 0;
+                var changePct = 0;
+
+                // Cari data harga dari elemen saudara di baris yang sama
+                // Struktur: <td> berisi img + span ticker, kolom berikutnya berisi harga
+                var row = img.closest('tr') || img.closest('[class*="row"]') || img.parentElement;
+                if (row) {
+                    var rowText = row.innerText || '';
+                    // Cari semua angka dalam baris
+                    var nums = rowText.match(/[\d,.]+/g) || [];
+                    for (var n = 0; n < nums.length; n++) {
+                        var val = parseFloat(nums[n].replace(/,/g, ''));
+                        if (val >= 50 && val <= 99000 && price === 0) {
+                            price = Math.round(val);
                         }
                     }
-                });
-            }
+                    // Cari persentase (format: +16,00% atau -3,50%)
+                    var pctMatch = rowText.match(/([+-]?\d+[.,]\d+)%/);
+                    if (pctMatch) {
+                        changePct = parseFloat(pctMatch[1].replace(',', '.'));
+                    }
+                }
 
-            // === STRATEGI 2: Fallback — cari link /symbol/ di seluruh halaman ===
-            if (results.length < 3) {
-                var links = document.querySelectorAll('a[href*="/symbol/"]');
+                results.push({
+                    ticker: ticker,
+                    lastPrice: price,
+                    changePercent: changePct
+                });
+            });
+
+            // === FALLBACK: Cari dari link /symbol/ jika logo tidak ditemukan ===
+            if (results.length < 2) {
+                var links = scope.querySelectorAll('a[href*="/symbol/"]');
                 links.forEach(function(link) {
                     var href = link.getAttribute('href') || '';
-                    var match = href.match(/\/symbol\/([A-Z]{2,5})/);
-                    if (match && !seen[match[1]]) {
-                        seen[match[1]] = true;
-                        results.push({
-                            ticker: match[1],
-                            lastPrice: 0,
-                            changePercent: 0
-                        });
+                    var m = href.match(/\/symbol\/([A-Z]{2,5})/);
+                    if (m && !seen[m[1]]) {
+                        seen[m[1]] = true;
+                        results.push({ ticker: m[1], lastPrice: 0, changePercent: 0 });
                     }
                 });
             }
 
-            // Ambil max 15 ticker teratas
             var topResults = results.slice(0, 15);
 
-            // Kirim ke Android
-            if (window.Android && window.Android.onMoversData) {
-                window.Android.onMoversData(JSON.stringify(topResults));
-            }
-
-            // Debug
+            // Debug info
             if (window.Android && window.Android.onMoversDebug) {
                 window.Android.onMoversDebug(
-                    'Found ' + topResults.length + ' tickers. ' +
-                    'Container: ' + (document.querySelector('#widget-container') ? 'YES' : 'NO') + '. ' +
+                    'Found ' + topResults.length + ' tickers via logos. ' +
+                    'Container: ' + (container ? 'YES' : 'NO (global)') + '. ' +
                     'URL: ' + window.location.pathname
                 );
+            }
+
+            // Kirim ke Android
+            if (topResults.length > 0 && window.Android && window.Android.onMoversData) {
+                window.Android.onMoversData(JSON.stringify(topResults));
             }
 
         } catch(e) {
