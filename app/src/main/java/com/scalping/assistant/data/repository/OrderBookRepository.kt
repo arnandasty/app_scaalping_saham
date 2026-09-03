@@ -141,13 +141,9 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
                 // 1. Order Flow
                 val ofResult = OrderFlowAnalyzer.analyze(ticker, history)
 
-                // 2. Technical (ambil dari cache atau fetch baru)
-                var techResult = technicalCache[ticker]
-                if (techResult == null) {
-                    val candles = yahooRepo.fetchIntradayCandles(ticker)
-                    techResult = TechnicalAnalyzer.analyze(ticker, candles, snap.lastPrice.toDouble())
-                    technicalCache[ticker] = techResult
-                }
+                // 2. Technical (ambil candle dari cache YahooRepo, analisis ulang dengan harga terbaru)
+                val candles = yahooRepo.fetchIntradayCandles(ticker)
+                val techResult = TechnicalAnalyzer.analyze(ticker, candles, snap.lastPrice.toDouble())
 
                 // 3. Scoring & Ranking
                 val prevRec = previousRecommendations[ticker]

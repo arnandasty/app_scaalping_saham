@@ -42,12 +42,8 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
 
         detailEntry.text = "Rp ${formatPrice(item.entryPrice)}"
         
-        val isExtremeMomentum = item.orderFlow.deltaVolumeScore >= 18 || item.orderFlow.hasBreakoutSignal
-        if (isExtremeMomentum) {
-            detailEntryStyle.text = "(Gaya: Buy on Breakout)"
-        } else {
-            detailEntryStyle.text = "(Gaya: Buy on Weakness / Pullback)"
-        }
+        val detailEntryStyle = view.findViewById<TextView>(R.id.detailEntryStyle)
+        detailEntryStyle.text = "(Gaya: ${item.style})"
         
         detailTarget.text = "Rp ${formatPrice(item.targetPrice)} (+${item.estimatedProfitPercent}%)"
         detailStopLoss.text = "Rp ${formatPrice(item.stopLoss)}"

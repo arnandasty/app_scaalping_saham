@@ -225,6 +225,13 @@ object ScoringEngine {
             warnings.add("⏱ Sesi pasar mendekati akhir. Tidak disarankan membuka posisi baru.")
         }
 
+        val style = when {
+            orderFlow.hasBreakoutSignal -> "Buy on Breakout (Tembus Offer)"
+            orderFlow.hasAbsorption -> "Buy on Weakness (Bandar Tampung Buangan)"
+            currentPrice <= technical.nearestSupport * 1.015 -> "Buy on Support (Pantulan Bawah)"
+            else -> "Momentum / Follow Trend"
+        }
+
         return StockAnalysis(
             ticker = ticker,
             score = finalScore,
@@ -235,6 +242,7 @@ object ScoringEngine {
             targetPrice = targetPrice,
             stopLoss = stopLoss,
             riskRewardRatio = rrRatio,
+            style = style,
             estimatedProfitPercent = profitPercent,
             reasons = reasons,
             warnings = warnings,
