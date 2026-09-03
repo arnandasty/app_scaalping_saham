@@ -26,6 +26,13 @@
             android:layout_height="720dp"
             android:alpha="0" />
 
+        <!-- Hidden WebView untuk Scraping Top Volume (saham dengan volume lot terbesar) -->
+        <WebView
+            android:id="@+id/webViewVolume"
+            android:layout_width="1280dp"
+            android:layout_height="720dp"
+            android:alpha="0" />
+
         <WebView
             android:id="@+id/webViewStockbit"
             android:layout_width="match_parent"

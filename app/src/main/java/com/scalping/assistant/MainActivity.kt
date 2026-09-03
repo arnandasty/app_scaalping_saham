@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var webViewMovers: WebView   // Top Hot / Top Value
     private lateinit var webViewFreq: WebView      // Top Frequency
+    private lateinit var webViewVolume: WebView    // Top Volume
     private lateinit var progressBar: ProgressBar
     private lateinit var tabLayout: com.google.android.material.tabs.TabLayout
     private lateinit var viewPager: androidx.viewpager2.widget.ViewPager2
@@ -68,6 +69,9 @@ class MainActivity : AppCompatActivity() {
             if (::webViewFreq.isInitialized && moversInjectorScript.isNotEmpty()) {
                 webViewFreq.evaluateJavascript(moversInjectorScript, null)
             }
+            if (::webViewVolume.isInitialized && moversInjectorScript.isNotEmpty()) {
+                webViewVolume.evaluateJavascript(moversInjectorScript, null)
+            }
             handler.postDelayed(this, 3000L) // Poll setiap 3 detik
         }
     }
@@ -94,8 +98,10 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://stockbit.com/orderbook")
         // WebView Movers: Top Hot/Value (saham paling banyak nilai transaksinya)
         webViewMovers.loadUrl("https://stockbit.com/market/hot")
-        // WebView Freq: Top Frequency (saham paling ramai jumlah transaksinya — favorit scalper!)
+        // WebView Freq: Top Frequency (saham paling ramai jumlah transaksinya)
         webViewFreq.loadUrl("https://stockbit.com/market/freq")
+        // WebView Volume: Top Volume (saham dengan volume lot terbesar)
+        webViewVolume.loadUrl("https://stockbit.com/market/volume")
 
         // Mulai polling timer
         handler.post(sessionTimerRunnable)
@@ -106,6 +112,7 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webViewStockbit)
         webViewMovers = findViewById(R.id.webViewMovers)
         webViewFreq = findViewById(R.id.webViewFreq)
+        webViewVolume = findViewById(R.id.webViewVolume)
         progressBar = findViewById(R.id.webViewProgressBar)
         tabLayout = findViewById(R.id.tabLayout)
         viewPager = findViewById(R.id.viewPager)
@@ -162,8 +169,15 @@ class MainActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
             userAgentString = desktopUserAgent
         }
+        webViewVolume.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            cacheMode = WebSettings.LOAD_DEFAULT
+            userAgentString = desktopUserAgent
+        }
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewMovers, true)
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewFreq, true)
+        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewVolume, true)
 
         val bridge = StockbitBridge(
             onDataReceived = { json ->
@@ -224,6 +238,7 @@ class MainActivity : AppCompatActivity() {
         }
         webViewMovers.addJavascriptInterface(moversBridge, "Android") // Data masuk ke tab Movers
         webViewFreq.addJavascriptInterface(moversBridge, "Android")   // Data top freq juga masuk ke tab Movers
+        webViewVolume.addJavascriptInterface(moversBridge, "Android") // Data top volume juga masuk ke tab Movers
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
@@ -506,5 +521,6 @@ class MainActivity : AppCompatActivity() {
         webView.destroy()
         webViewMovers.destroy()
         webViewFreq.destroy()
+        webViewVolume.destroy()
     }
 }
