@@ -33,6 +33,7 @@ data class StockAnalysis(
     val targetPrice: Int,
     val stopLoss: Int,
     val riskRewardRatio: Double,
+    val style: String,
     val estimatedProfitPercent: Double,
     val reasons: List<String>,
     val warnings: List<String>,

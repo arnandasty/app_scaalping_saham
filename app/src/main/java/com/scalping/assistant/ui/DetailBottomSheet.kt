@@ -42,7 +42,6 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
 
         detailEntry.text = "Rp ${formatPrice(item.entryPrice)}"
         
-        val detailEntryStyle = view.findViewById<TextView>(R.id.detailEntryStyle)
         detailEntryStyle.text = "(Gaya: ${item.style})"
         
         detailTarget.text = "Rp ${formatPrice(item.targetPrice)} (+${item.estimatedProfitPercent}%)"
