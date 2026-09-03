@@ -173,12 +173,12 @@ object ScoringEngine {
             prevRec == Recommendation.STRONG_BUY && finalScore >= 78 && !orderFlow.hasFakeWall -> Recommendation.STRONG_BUY
             
             finalScore >= 68 && !orderFlow.hasFakeWall -> Recommendation.BUY
-            // Jika sebelumnya BUY, tahan status sampai skor murni anjlok di bawah 62
-            prevRec == Recommendation.BUY && finalScore >= 62 && !orderFlow.hasFakeWall -> Recommendation.BUY
+            // Jika sebelumnya STRONG BUY atau BUY, tahan status sampai skor murni anjlok di bawah 62
+            (prevRec == Recommendation.BUY || prevRec == Recommendation.STRONG_BUY) && finalScore >= 62 && !orderFlow.hasFakeWall -> Recommendation.BUY
             
             finalScore >= 52 -> Recommendation.WATCH
-            // Jika sebelumnya WATCH, tahan sampai turun ke 45
-            prevRec == Recommendation.WATCH && finalScore >= 45 -> Recommendation.WATCH
+            // Jika sebelumnya bukan AVOID, tahan sampai turun ke 45
+            (prevRec != Recommendation.AVOID) && finalScore >= 45 -> Recommendation.WATCH
             
             else -> Recommendation.AVOID
         }
