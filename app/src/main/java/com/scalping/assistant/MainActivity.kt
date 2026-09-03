@@ -216,6 +216,13 @@ class MainActivity : AppCompatActivity() {
                 if (injectorScript.isNotEmpty()) {
                     view.evaluateJavascript(injectorScript, null)
                 }
+                
+                // Pastikan Movers WebView juga pindah dari halaman login jika sudah login
+                if (url.contains("stockbit.com") && !url.contains("/login")) {
+                    if (::webViewMovers.isInitialized && webViewMovers.url?.contains("/login") == true) {
+                        webViewMovers.loadUrl("https://stockbit.com/orderbook")
+                    }
+                }
             }
         }
 

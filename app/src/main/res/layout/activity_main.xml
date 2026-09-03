@@ -12,16 +12,17 @@
         android:layout_height="0dp"
         android:layout_weight="55">
 
+        <!-- Hidden WebView untuk Scraping Movers (Dibuat seukuran layar agar React merender sidebar Desktop) -->
+        <WebView
+            android:id="@+id/webViewMovers"
+            android:layout_width="1280dp"
+            android:layout_height="720dp"
+            android:layout_marginLeft="-10000dp" />
+
         <WebView
             android:id="@+id/webViewStockbit"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
-
-        <WebView
-            android:id="@+id/webViewMovers"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:visibility="gone" />
 
         <ProgressBar
             android:id="@+id/webViewProgressBar"
