@@ -196,6 +196,13 @@ class MainActivity : AppCompatActivity() {
                     // Ignore
                 }
             }
+
+            @android.webkit.JavascriptInterface
+            fun onDebug(msg: String) {
+                runOnUiThread {
+                    tvStatusLog.text = "Movers Debug: $msg"
+                }
+            }
         }
         webViewMovers.addJavascriptInterface(moversBridge, "MoversAndroid")
 
