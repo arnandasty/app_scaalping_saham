@@ -1,27 +1,36 @@
 window.autoFillTickers = function(tickers) {
     if (!tickers || tickers.length === 0) return;
-    const inputs = document.querySelectorAll('input');
-    let tickerIndex = 0;
-    inputs.forEach(input => {
-        // Cari input yang masih kosong (belum ada tickernya)
-        if (!input.value || input.value.trim() === '') {
-            if (tickerIndex < tickers.length) {
-                // Bypass React input setter protection
-                let nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                if (nativeInputValueSetter) {
-                    nativeInputValueSetter.call(input, tickers[tickerIndex]);
-                } else {
-                    input.value = tickers[tickerIndex];
-                }
-                
-                // Trigger events so React recognizes the change
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-                
-                tickerIndex++;
-            }
+    var inputs = document.querySelectorAll('input');
+    var tickerInputs = [];
+    
+    // Kumpulkan semua input yang berisi/bisa berisi ticker
+    for (var i = 0; i < inputs.length; i++) {
+        var v = (inputs[i].value || '').trim().toUpperCase();
+        // Input ticker: kosong ATAU sudah berisi 3-5 huruf kapital
+        if (v === '' || /^[A-Z]{3,5}$/.test(v)) {
+            tickerInputs.push(inputs[i]);
         }
-    });
+    }
+    
+    // Ganti semua input dengan ticker dari Movers (per-posisi)
+    for (var t = 0; t < Math.min(tickerInputs.length, tickers.length); t++) {
+        var input = tickerInputs[t];
+        var currentVal = (input.value || '').trim().toUpperCase();
+        if (currentVal === tickers[t].toUpperCase()) continue; // Sudah sama, skip
+        
+        // Bypass React input setter protection
+        var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        if (nativeInputValueSetter) {
+            nativeInputValueSetter.call(input, tickers[t]);
+        } else {
+            input.value = tickers[t];
+        }
+        
+        // Trigger events agar React mengenali perubahan
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+    }
 };
 
 (function() {

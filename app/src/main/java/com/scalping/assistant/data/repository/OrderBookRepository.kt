@@ -209,58 +209,89 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
     }
 
     /**
-     * Proses data TICKER dari sidebar Movers (hanya ticker + harga + change%).
-     * Tidak memerlukan data orderbook bid/offer. Analisis hanya berbasis Teknikal (Yahoo Finance).
+     * Proses data orderbook LENGKAP dari webViewMovers (bid/offer, sama persis seperti Manual).
+     * Data ini SELALU masuk ke tab Movers.
      */
-    suspend fun processMoversTickerData(jsonString: String) {
+    suspend fun processMoversJsonData(jsonString: String) {
         try {
             val jsonArray = JSONArray(jsonString)
             if (jsonArray.length() == 0) return
 
-            val sessionInfo = MarketSession.getCurrentSession()
-            val analyses = mutableListOf<StockAnalysis>()
+            val currentSnapshots = mutableListOf<OrderBookSnapshot>()
 
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 val ticker = obj.getString("ticker").trim().uppercase()
-                val lastPrice = obj.optInt("lastPrice", 0)
+                val lastPrice = obj.getInt("lastPrice")
                 val changePercent = obj.optDouble("changePercent", 0.0)
+                val timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                val totalBidLot = obj.optLong("totalBidLot", 0L)
+                val totalOfferLot = obj.optLong("totalOfferLot", 0L)
 
-                if (lastPrice <= 0) continue // Skip jika tidak ada harga valid
+                val bidLevels = mutableListOf<com.scalping.assistant.data.models.PriceLevel>()
+                val bidArr = obj.optJSONArray("bidLevels")
+                if (bidArr != null) {
+                    for (b in 0 until bidArr.length()) {
+                        val bObj = bidArr.getJSONObject(b)
+                        bidLevels.add(com.scalping.assistant.data.models.PriceLevel(
+                            price = bObj.getInt("price"), lot = bObj.getLong("lot"),
+                            frequency = bObj.optInt("frequency", 0)))
+                    }
+                }
 
-                // Buat snapshot minimal (tanpa bid/offer levels)
+                val offerLevels = mutableListOf<com.scalping.assistant.data.models.PriceLevel>()
+                val offerArr = obj.optJSONArray("offerLevels")
+                if (offerArr != null) {
+                    for (o in 0 until offerArr.length()) {
+                        val oObj = offerArr.getJSONObject(o)
+                        offerLevels.add(com.scalping.assistant.data.models.PriceLevel(
+                            price = oObj.getInt("price"), lot = oObj.getLong("lot"),
+                            frequency = oObj.optInt("frequency", 0)))
+                    }
+                }
+
                 val snapshot = OrderBookSnapshot(
-                    ticker = ticker,
-                    lastPrice = lastPrice,
-                    changePercent = changePercent,
-                    timestamp = System.currentTimeMillis(),
-                    bidLevels = emptyList(),
-                    offerLevels = emptyList(),
-                    totalBidLot = 0L,
-                    totalOfferLot = 0L
+                    ticker = ticker, lastPrice = lastPrice, changePercent = changePercent,
+                    timestamp = timestamp, bidLevels = bidLevels, offerLevels = offerLevels,
+                    totalBidLot = totalBidLot, totalOfferLot = totalOfferLot
                 )
+                currentSnapshots.add(snapshot)
 
-                // Analisis teknikal dari Yahoo Finance candles
+                val sessionInfo = MarketSession.getCurrentSession()
+                val isQuietMarket = sessionInfo.phase == com.scalping.assistant.engine.MarketPhase.CLOSED ||
+                        sessionInfo.phase == com.scalping.assistant.engine.MarketPhase.PRE_OPEN ||
+                        sessionInfo.phase == com.scalping.assistant.engine.MarketPhase.BREAK
+
+                val history = historyMap.getOrPut("movers_$ticker") { mutableListOf() }
+                val lastHist = history.lastOrNull()
+                val isChanged = if (lastHist == null) true
+                else if (isQuietMarket) lastHist.lastPrice != snapshot.lastPrice
+                else lastHist.lastPrice != snapshot.lastPrice ||
+                        lastHist.totalBidLot != snapshot.totalBidLot ||
+                        lastHist.totalOfferLot != snapshot.totalOfferLot
+
+                if (isChanged) {
+                    history.add(snapshot)
+                    if (history.size > MAX_SNAPSHOT_HISTORY) history.removeAt(0)
+                }
+            }
+
+            val sessionInfo = MarketSession.getCurrentSession()
+            val analyses = mutableListOf<StockAnalysis>()
+            for (snap in currentSnapshots) {
+                val ticker = snap.ticker
+                val history = historyMap["movers_$ticker"] ?: listOf(snap)
+                val ofResult = OrderFlowAnalyzer.analyze(ticker, history)
                 val candles = yahooRepo.fetchIntradayCandles(ticker)
-                val techResult = TechnicalAnalyzer.analyze(ticker, candles, lastPrice.toDouble())
-
-                // OrderFlow kosong (tidak ada data bid/offer dari sidebar)
-                val ofResult = com.scalping.assistant.data.models.OrderFlowResult(
-                    ticker = ticker,
-                    totalScore = 15, // Skor netral karena tidak ada data orderflow
-                    details = listOf("ℹ️ Data Movers (tanpa orderbook). Analisis berbasis teknikal.")
-                )
-
+                val techResult = TechnicalAnalyzer.analyze(ticker, candles, snap.lastPrice.toDouble())
                 val prevRec = previousRecommendations["movers_$ticker"]
-                val analysis = ScoringEngine.generateAnalysis(snapshot, ofResult, techResult, sessionInfo, prevRec)
+                val analysis = ScoringEngine.generateAnalysis(snap, ofResult, techResult, sessionInfo, prevRec)
                 previousRecommendations["movers_$ticker"] = analysis.recommendation
                 analyses.add(analysis)
             }
 
-            if (analyses.isNotEmpty()) {
-                _moversFlow.value = analyses.sortedByDescending { it.score }
-                refreshTopPicks()
-            }
+            _moversFlow.value = analyses.sortedByDescending { it.score }
+            refreshTopPicks()
 
         } catch (e: Exception) {
             _statusFlow.value = "Error movers: ${e.localizedMessage}"

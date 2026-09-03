@@ -54,16 +54,34 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var injectorScript = ""
     private var moversInjectorScript = ""
+    private var moversTickers = listOf<String>() // Daftar ticker dari sidebar Movers
     private val notifiedBuyTickers = mutableSetOf<String>()
 
     private val scrapingRunnable = object : Runnable {
         override fun run() {
+            // === WebView Utama: Scrape orderbook manual ===
             if (::webView.isInitialized && injectorScript.isNotEmpty()) {
                 webView.evaluateJavascript(injectorScript, null)
             }
-            if (::webViewMovers.isInitialized && moversInjectorScript.isNotEmpty()) {
-                webViewMovers.evaluateJavascript(moversInjectorScript, null)
+
+            // === WebView Movers: 2-Fase ===
+            if (::webViewMovers.isInitialized) {
+                // Fase 1: Scrape sidebar untuk ambil daftar ticker Movers
+                if (moversInjectorScript.isNotEmpty()) {
+                    webViewMovers.evaluateJavascript(moversInjectorScript, null)
+                }
+
+                // Fase 2: Isi widget orderbook dengan ticker Movers, lalu scrape bid/offer
+                if (moversTickers.isNotEmpty() && injectorScript.isNotEmpty()) {
+                    val tickersJson = org.json.JSONArray(moversTickers).toString()
+                    val autoFillAndScrape = "if(typeof window.autoFillTickers === 'function') { window.autoFillTickers($tickersJson); } $injectorScript"
+                    // Delay 500ms agar React sempat re-render setelah autoFill
+                    handler.postDelayed({
+                        webViewMovers.evaluateJavascript(autoFillAndScrape, null)
+                    }, 500L)
+                }
             }
+
             handler.postDelayed(this, 3000L)
         }
     }
@@ -177,19 +195,48 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(bridge, "Android")
         
         val moversBridge = object {
-            // Menerima data ticker+harga dari sidebar Movers
+            // === Dari movers_injector.js: daftar ticker sidebar ===
             @android.webkit.JavascriptInterface
             fun onMoversData(jsonArray: String) {
-                lifecycleScope.launch {
-                    orderBookRepo.processMoversTickerData(jsonArray)
-                }
+                try {
+                    val arr = org.json.JSONArray(jsonArray)
+                    val tickers = mutableListOf<String>()
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        tickers.add(obj.getString("ticker"))
+                    }
+                    if (tickers.isNotEmpty()) {
+                        moversTickers = tickers
+                    }
+                } catch (e: Exception) { /* ignore */ }
             }
 
             @android.webkit.JavascriptInterface
             fun onMoversDebug(msg: String) {
-                runOnUiThread {
-                    tvStatusLog.text = "Movers: $msg"
+                runOnUiThread { tvStatusLog.text = "Movers: $msg" }
+            }
+
+            // === Dari stockbit_injector.js: data orderbook LENGKAP ===
+            @android.webkit.JavascriptInterface
+            fun onOrderBookData(jsonString: String) {
+                lifecycleScope.launch {
+                    orderBookRepo.processMoversJsonData(jsonString)
                 }
+            }
+
+            @android.webkit.JavascriptInterface
+            fun onLoginRequired() {
+                // Movers WebView butuh login — akan otomatis sync saat webView utama login
+            }
+
+            @android.webkit.JavascriptInterface
+            fun onScrapingStatus(status: String) {
+                // Tidak perlu tampilkan status dari movers scraper
+            }
+
+            @android.webkit.JavascriptInterface
+            fun onScrapingError(error: String) {
+                runOnUiThread { tvStatusLog.text = "Movers Err: $error" }
             }
         }
         webViewMovers.addJavascriptInterface(moversBridge, "Android")
