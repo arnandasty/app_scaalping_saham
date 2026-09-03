@@ -20,6 +20,9 @@ object TechnicalAnalyzer {
         val lows = candles.map { it.low }
 
         val priceToUse = if (currentPrice > 0.0) currentPrice else closes.last()
+        
+        val vwapValue = calculateVWAP(candles)
+        val mfiValue = calculateMFI(candles, 14)
 
         // 1. EMA 9 & EMA 21
         val ema9Values = calculateEMA(closes, 9)
@@ -95,6 +98,8 @@ object TechnicalAnalyzer {
 
         return TechnicalResult(
             ticker = ticker,
+            vwap = vwapValue,
+            mfi = mfiValue,
             ema9 = lastEma9,
             ema21 = lastEma21,
             emaScore = emaScore,
@@ -115,6 +120,46 @@ object TechnicalAnalyzer {
             nearestSupport = nearestSupport,
             totalScore = totalScore.coerceIn(0, 30)
         )
+    }
+
+    private fun calculateVWAP(candles: List<Candle>): Double {
+        if (candles.isEmpty()) return 0.0
+        var cumulativeTypicalPriceVolume = 0.0
+        var cumulativeVolume = 0L
+
+        for (candle in candles) {
+            val typicalPrice = (candle.high + candle.low + candle.close) / 3.0
+            cumulativeTypicalPriceVolume += typicalPrice * candle.volume
+            cumulativeVolume += candle.volume
+        }
+        
+        return if (cumulativeVolume > 0) cumulativeTypicalPriceVolume / cumulativeVolume else 0.0
+    }
+
+    private fun calculateMFI(candles: List<Candle>, period: Int): Double {
+        if (candles.size <= period) return 50.0 // Default neutral
+        
+        var positiveMoneyFlow = 0.0
+        var negativeMoneyFlow = 0.0
+        
+        val subset = candles.takeLast(period + 1)
+        for (i in 1 until subset.size) {
+            val prev = subset[i - 1]
+            val curr = subset[i]
+            val prevTypical = (prev.high + prev.low + prev.close) / 3.0
+            val currTypical = (curr.high + curr.low + curr.close) / 3.0
+            val moneyFlow = currTypical * curr.volume
+            
+            if (currTypical > prevTypical) {
+                positiveMoneyFlow += moneyFlow
+            } else if (currTypical < prevTypical) {
+                negativeMoneyFlow += moneyFlow
+            }
+        }
+        
+        if (negativeMoneyFlow == 0.0) return 100.0
+        val moneyFlowRatio = positiveMoneyFlow / negativeMoneyFlow
+        return 100.0 - (100.0 / (1.0 + moneyFlowRatio))
     }
 
     private fun calculateEMA(data: List<Double>, period: Int): List<Double> {

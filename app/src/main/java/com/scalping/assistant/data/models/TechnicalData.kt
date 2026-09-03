@@ -11,6 +11,9 @@ data class Candle(
 
 data class TechnicalResult(
     val ticker: String,
+    val vwap: Double = 0.0,
+    val mfi: Double = 0.0,
+
     val ema9: Double = 0.0,
     val ema21: Double = 0.0,
     val emaScore: Int = 0, // 0 - 6

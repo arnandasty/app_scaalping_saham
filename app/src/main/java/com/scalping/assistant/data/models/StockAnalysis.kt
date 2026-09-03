@@ -18,6 +18,7 @@ data class OrderFlowResult(
     val hasFakeWall: Boolean = false,
     val hasAbsorption: Boolean = false,
     val hasBreakoutSignal: Boolean = false,
+    val hasBearTrap: Boolean = false,
     val cumulativeDelta: Long = 0L,
     val details: List<String> = emptyList()
 )

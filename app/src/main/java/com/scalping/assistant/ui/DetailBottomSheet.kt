@@ -77,6 +77,19 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         }
         
         detailSupportResistance.text = "S1 (Support): Rp ${formatPrice(item.technical.nearestSupport.toInt())} | R1 (Resistance): Rp ${formatPrice(item.technical.nearestResistance.toInt())}"
+        
+        val btnDoneBuy = view.findViewById<android.widget.Button>(R.id.btnDoneBuy)
+        val btnDoneSell = view.findViewById<android.widget.Button>(R.id.btnDoneSell)
+        val tvTradeStatus = view.findViewById<TextView>(R.id.tvTradeStatus)
+
+        btnDoneBuy.setOnClickListener {
+            (activity as? com.scalping.assistant.MainActivity)?.setActiveTrade(item.ticker, item.entryPrice.toDouble())
+            dismiss()
+        }
+        btnDoneSell.setOnClickListener {
+            (activity as? com.scalping.assistant.MainActivity)?.clearActiveTrade()
+            dismiss()
+        }
     }
 
     private fun formatPrice(price: Int): String {

@@ -91,7 +91,7 @@ object OrderFlowAnalyzer {
         val latestSnapshots = history.takeLast(10)
         for (snap in latestSnapshots) {
             val avgBidLot = if (snap.bidLevels.isNotEmpty()) snap.bidLevels.map { it.lot }.average() else 0.0
-            val suspiciousBid = snap.bidLevels.any { it.lot > avgBidLot * 3.5 && it.lot > 2000 }
+            val suspiciousBid = snap.bidLevels.any { it.lot > avgBidLot * 3.5 && (it.lot.toLong() * 100 * it.price) > 200_000_000L }
 
             if (suspiciousBid) {
                 // Cek apakah di snapshot terbaru order ini hilang padahal harga tidak tembus ke bawah
@@ -123,15 +123,24 @@ object OrderFlowAnalyzer {
         var hasBreakoutSignal = false
         val latestSnap = history.last()
         val avgOfferLot = if (latestSnap.offerLevels.isNotEmpty()) latestSnap.offerLevels.map { it.lot }.average() else 0.0
-        val thickOffer = latestSnap.offerLevels.any { it.lot > avgOfferLot * 3.5 && it.lot > 2000 }
+        val thickOffer = latestSnap.offerLevels.any { it.lot > avgOfferLot * 3.5 && (it.lot.toLong() * 100 * it.price) > 200_000_000L }
         
-        if (thickOffer && cumulativeDelta > 3000L && aggressiveBuyCount > aggressiveSellCount) {
+        val cumulativeDeltaValue = cumulativeDelta * 100 * latestSnap.lastPrice
+        if (thickOffer && cumulativeDeltaValue > 300_000_000L && aggressiveBuyCount > aggressiveSellCount) {
             hasBreakoutSignal = true
             details.add("🚀 BREAKOUT ALERT: Tembok Offer tebal sedang dihajar pembeli agresif!")
         }
         val breakoutBonus = if (hasBreakoutSignal) 10 else 0
 
         val totalScore = (deltaScore + stabilityScore + fakeWallPenalty + absorptionBonus + breakoutBonus).coerceIn(0, 50)
+
+        // 6. Bear Trap (False Breakdown)
+        // Jika harga jatuh (indikasi support jebol) tapi delta volume positif (tidak ada guyuran nyata)
+        var hasBearTrap = false
+        if (history.last().lastPrice < history.first().lastPrice && cumulativeDeltaValue > -50_000_000L) {
+            hasBearTrap = true
+            details.add("⚠️ POTENSI BEAR TRAP: Harga turun (Support jebol) tapi volume Guyuran KECIL. Tahan Cut Loss!")
+        }
 
         return OrderFlowResult(
             ticker = ticker,
@@ -144,6 +153,7 @@ object OrderFlowAnalyzer {
             hasFakeWall = hasFakeWall,
             hasAbsorption = hasAbsorption,
             hasBreakoutSignal = hasBreakoutSignal,
+            hasBearTrap = hasBearTrap,
             cumulativeDelta = cumulativeDelta,
             details = details
         )

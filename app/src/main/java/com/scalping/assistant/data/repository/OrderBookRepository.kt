@@ -10,21 +10,52 @@ import com.scalping.assistant.engine.TechnicalAnalyzer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import com.scalping.assistant.data.models.Recommendation
 import org.json.JSONArray
+
+data class ActiveTrade(
+    val ticker: String,
+    val entryPrice: Double
+)
 
 class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
 
     private val MAX_SNAPSHOT_HISTORY = 30
     private val historyMap = mutableMapOf<String, MutableList<OrderBookSnapshot>>()
     private val technicalCache = mutableMapOf<String, TechnicalResult>()
+    private val previousRecommendations = mutableMapOf<String, Recommendation>()
 
-    private val _rankingFlow = MutableStateFlow<List<StockAnalysis>>(emptyList())
-    val rankingFlow: StateFlow<List<StockAnalysis>> = _rankingFlow.asStateFlow()
+    private val _manualFlow = MutableStateFlow<List<StockAnalysis>>(emptyList())
+    val manualFlow: StateFlow<List<StockAnalysis>> = _manualFlow.asStateFlow()
+
+    private val _moversFlow = MutableStateFlow<List<StockAnalysis>>(emptyList())
+    val moversFlow: StateFlow<List<StockAnalysis>> = _moversFlow.asStateFlow()
+
+    private val _topPicksFlow = MutableStateFlow<List<StockAnalysis>>(emptyList())
+    val topPicksFlow: StateFlow<List<StockAnalysis>> = _topPicksFlow.asStateFlow()
 
     private val _statusFlow = MutableStateFlow("Menunggu data...")
     val statusFlow: StateFlow<String> = _statusFlow.asStateFlow()
 
-    suspend fun processJsonData(jsonString: String) {
+    private val _bailoutFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 5)
+    val bailoutFlow = _bailoutFlow.asSharedFlow()
+
+    private val recentBuys = mutableMapOf<String, Long>()
+    private val RECENT_BUY_DURATION_MS = 5 * 60 * 1000L // 5 menit
+    
+    private val _activeTradeFlow = MutableStateFlow<Pair<ActiveTrade, StockAnalysis>?>(null)
+    val activeTradeFlow: StateFlow<Pair<ActiveTrade, StockAnalysis>?> = _activeTradeFlow.asStateFlow()
+    
+    var currentActiveTrade: ActiveTrade? = null
+        set(value) {
+            field = value
+            if (value == null) {
+                _activeTradeFlow.value = null
+            }
+        }
+
+    suspend fun processJsonData(jsonString: String, moversTickers: Set<String> = emptySet()) {
         try {
             val jsonArray = JSONArray(jsonString)
             if (jsonArray.length() == 0) return
@@ -119,13 +150,47 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
                 }
 
                 // 3. Scoring & Ranking
-                val analysis = ScoringEngine.generateAnalysis(snap, ofResult, techResult, sessionInfo)
+                val prevRec = previousRecommendations[ticker]
+                val analysis = ScoringEngine.generateAnalysis(snap, ofResult, techResult, sessionInfo, prevRec)
+                previousRecommendations[ticker] = analysis.recommendation
+                
+                // Panic Bailout Logic
+                val now = System.currentTimeMillis()
+                if (analysis.recommendation == Recommendation.BUY || analysis.recommendation == Recommendation.STRONG_BUY) {
+                    recentBuys[ticker] = now
+                }
+                
+                val buyTime = recentBuys[ticker]
+                if (buyTime != null && (now - buyTime) < RECENT_BUY_DURATION_MS) {
+                    // Jika tiba-tiba terjadi guyuran masif setelah direkomendasikan Buy (Batas: Rp 500 Juta)
+                    val cumulativeDeltaValue = ofResult.cumulativeDelta * 100 * snap.lastPrice
+                    if (cumulativeDeltaValue < -500_000_000L || ofResult.hasFakeWall) {
+                        _bailoutFlow.tryEmit(ticker)
+                        recentBuys.remove(ticker) // Hapus agar tidak spam
+                    }
+                }
+
                 analyses.add(analysis)
+                
+                // Update Live PnL untuk Active Trade
+                val currentTrade = currentActiveTrade
+                if (currentTrade != null && currentTrade.ticker == ticker) {
+                    _activeTradeFlow.value = Pair(currentTrade, analysis)
+                }
             }
 
-            // Urutkan dari skor tertinggi
+            // Pisahkan data ke dalam 3 tab
             val sorted = analyses.sortedByDescending { it.score }
-            _rankingFlow.value = sorted
+            
+            val manualList = sorted.filter { it.ticker !in moversTickers }
+            val moversList = sorted.filter { it.ticker in moversTickers }
+            val topPicksList = sorted.filter { it.score >= 75 && it.riskRewardRatio >= 1.5 }
+                .take(3) // Ambil 3 terbaik dari manapun asalnya
+
+            _manualFlow.value = manualList
+            _moversFlow.value = moversList
+            _topPicksFlow.value = topPicksList
+
             _statusFlow.value = "Terbaca ${sorted.size} saham • Update ${sessionInfo.timeDisplay}"
         } catch (e: Exception) {
             _statusFlow.value = "Error memproses data: ${e.localizedMessage}"

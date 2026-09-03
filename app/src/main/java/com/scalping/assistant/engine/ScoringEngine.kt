@@ -14,7 +14,8 @@ object ScoringEngine {
         snapshot: OrderBookSnapshot,
         orderFlow: OrderFlowResult,
         technical: TechnicalResult,
-        sessionInfo: SessionInfo
+        sessionInfo: SessionInfo,
+        prevRec: Recommendation? = null
     ): StockAnalysis {
         val ticker = snapshot.ticker
         val currentPrice = if (snapshot.lastPrice > 0) snapshot.lastPrice else (snapshot.offerLevels.firstOrNull()?.price ?: 100)
@@ -44,7 +45,7 @@ object ScoringEngine {
         // Cari apakah ada tembok offer tebal di atas entry
         val avgOfferLot = if (snapshot.offerLevels.isNotEmpty()) snapshot.offerLevels.map { it.lot }.average() else 0.0
         val thickWallLevel = snapshot.offerLevels
-            .filter { it.price > entryPrice && it.lot > avgOfferLot * 2.5 && it.lot > 3000 }
+            .filter { it.price > entryPrice && it.lot > avgOfferLot * 2.5 && (it.lot.toLong() * 100 * it.price) > 200_000_000L }
             .minByOrNull { it.price }
 
         var rawTarget = if (thickWallLevel != null) {
@@ -66,14 +67,30 @@ object ScoringEngine {
         }
         val targetPrice = PriceFraction.roundUpToValidTick(rawTarget.roundToInt())
 
-        // 3. Stop Loss: Batas toleransi 1.2% - 1.8% di bawah Entry
+        // 3. Stop Loss: Prioritas utama adalah Bantalan Tembok Bid (Bid Wall)
         val maxStopLoss = entryPrice * 0.985
-        var rawSL = if (technical.nearestSupport in (entryPrice * 0.97)..maxStopLoss) {
+        
+        // Cari tembok Bid raksasa di bawah harga masuk
+        val avgBidLot = if (snapshot.bidLevels.isNotEmpty()) snapshot.bidLevels.map { it.lot }.average() else 0.0
+        val thickBidWall = snapshot.bidLevels
+            .filter { it.price < entryPrice && it.lot > avgBidLot * 2.5 && (it.lot.toLong() * 100 * it.price) > 200_000_000L }
+            .maxByOrNull { it.price } // Ambil tembok tertinggi yang terdekat di bawah entry
+
+        var rawSL = if (thickBidWall != null) {
+            // Cut loss tepat di bawah tembok bid (jika tembok jebol, langsung buang)
+            val tick = PriceFraction.getTickSize(thickBidWall.price)
+            thickBidWall.price.toDouble() - tick
+        } else if (technical.nearestSupport in (entryPrice * 0.96)..maxStopLoss) {
             technical.nearestSupport
-        } else if (technical.bbLower in (entryPrice * 0.97)..maxStopLoss) {
+        } else if (technical.bbLower in (entryPrice * 0.96)..maxStopLoss) {
             technical.bbLower
         } else {
             entryPrice * 0.985
+        }
+        
+        // Cegah Stop Loss yang terlalu dalam akibat tembok yang terlalu jauh
+        if (rawSL < entryPrice * 0.96) {
+            rawSL = entryPrice * 0.985
         }
         val stopLoss = PriceFraction.roundDownToValidTick(rawSL.roundToInt())
 
@@ -89,7 +106,23 @@ object ScoringEngine {
 
         // B. Technical (0 - 30)
         val isNewIpo = (technical.totalScore == 0)
-        val effectiveTechScore = if (isNewIpo) 15 else technical.totalScore
+        var effectiveTechScore = if (isNewIpo) 15 else technical.totalScore
+
+        // VWAP Modifier
+        if (technical.vwap > 0) {
+            if (snapshot.lastPrice < technical.vwap * 0.99) {
+                effectiveTechScore -= 5 // Harga di bawah VWAP (Bearish intraday)
+            } else if (snapshot.lastPrice > technical.vwap) {
+                effectiveTechScore += 2 // Di atas VWAP (Bullish intraday)
+            }
+        }
+
+        // MFI Divergence (Harga naik tajam tapi MFI rendah = Fake Pump)
+        if (technical.mfi > 0) {
+            if (snapshot.changePercent > 5.0 && technical.mfi < 40) {
+                effectiveTechScore -= 15 // Divergence bahaya!
+            }
+        }
 
         // C. Market Context (0 - 20)
         val sessionBonus = sessionInfo.phase.scoreBonus // 0 - 8
@@ -118,19 +151,35 @@ object ScoringEngine {
         val rrPenalty = if (rrRatio < 1.2) -8 else 0
 
         // Proteksi FOMO: Penalti jika saham sudah terbang terlalu tinggi (> +15%)
-        val overboughtPenalty = when {
+        var overboughtPenalty = when {
             snapshot.changePercent >= 20.0 -> -15
             snapshot.changePercent >= 14.0 -> -8
             else -> 0
         }
 
+        // Smart FOMO: Batalkan/kurangi penalti jika akumulasi sangat kuat (volume & teknikal mendukung)
+        if (overboughtPenalty < 0 && isExtremeMomentum && technical.isSupertrendBullish) {
+            overboughtPenalty = 0 // Bandar sedang ngegas, ikut!
+        } else if (overboughtPenalty < 0 && orderFlow.deltaVolumeScore >= 18) {
+            overboughtPenalty /= 2 // Kurangi penalti setengahnya karena akumulasi nyata
+        }
+
         val finalScore = (ofScore + effectiveTechScore + marketScore + rrPenalty + overboughtPenalty).coerceIn(0, 100)
 
-        // 6. Tentukan Rekomendasi
+        // 6. Tentukan Rekomendasi (Dengan Sistem Hysteresis / Sabuk Pengaman)
         val recommendation = when {
             finalScore >= 82 && rrRatio >= 1.4 && !orderFlow.hasFakeWall -> Recommendation.STRONG_BUY
+            // Jika sebelumnya STRONG BUY, tahan status sampai skor turun di bawah 78
+            prevRec == Recommendation.STRONG_BUY && finalScore >= 78 && !orderFlow.hasFakeWall -> Recommendation.STRONG_BUY
+            
             finalScore >= 68 && !orderFlow.hasFakeWall -> Recommendation.BUY
+            // Jika sebelumnya BUY, tahan status sampai skor murni anjlok di bawah 62
+            prevRec == Recommendation.BUY && finalScore >= 62 && !orderFlow.hasFakeWall -> Recommendation.BUY
+            
             finalScore >= 52 -> Recommendation.WATCH
+            // Jika sebelumnya WATCH, tahan sampai turun ke 45
+            prevRec == Recommendation.WATCH && finalScore >= 45 -> Recommendation.WATCH
+            
             else -> Recommendation.AVOID
         }
 

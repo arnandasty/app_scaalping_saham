@@ -252,6 +252,46 @@
             android:text="S1: 9.300 | R1: 9.700"
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
-    </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:weightSum="2">
 
+            <Button
+                android:id="@+id/btnDoneSell"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:backgroundTint="@color/signal_red"
+                android:textColor="@android:color/white"
+                android:text="DONE SELL"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/btnDoneBuy"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:backgroundTint="@color/signal_green"
+                android:textColor="@android:color/black"
+                android:textStyle="bold"
+                android:text="DONE BUY" />
+        </LinearLayout>
+        
+        <TextView
+            android:id="@+id/tvTradeStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:textSize="12sp"
+            android:textColor="@color/brand_accent"
+            android:visibility="gone"
+            android:text="Tercatat masuk di harga XXX" />
+    </LinearLayout>
 </androidx.core.widget.NestedScrollView>

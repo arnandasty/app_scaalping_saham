@@ -39,15 +39,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var webViewMovers: WebView
     private lateinit var progressBar: ProgressBar
-    private lateinit var rvStockRanking: RecyclerView
-    private lateinit var layoutEmptyState: LinearLayout
+    private lateinit var tabLayout: com.google.android.material.tabs.TabLayout
+    private lateinit var viewPager: androidx.viewpager2.widget.ViewPager2
     private lateinit var tvSessionBadge: TextView
     private lateinit var tvSessionTime: TextView
     private lateinit var tvLiveStatus: TextView
     private lateinit var tvStockCount: TextView
     private lateinit var tvStatusLog: TextView
 
-    private lateinit var rankingAdapter: RankingAdapter
+    private lateinit var pagerAdapter: com.scalping.assistant.ui.RankingPagerAdapter
     private lateinit var yahooRepo: YahooFinanceRepository
     private lateinit var orderBookRepo: OrderBookRepository
 
@@ -90,7 +90,7 @@ class MainActivity : AppCompatActivity() {
         initViews()
         initServices()
         setupWebView()
-        setupRecyclerView()
+        setupViewPager()
         observeData()
 
         // Load Stockbit
@@ -106,8 +106,8 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webViewStockbit)
         webViewMovers = findViewById(R.id.webViewMovers)
         progressBar = findViewById(R.id.webViewProgressBar)
-        rvStockRanking = findViewById(R.id.rvStockRanking)
-        layoutEmptyState = findViewById(R.id.layoutEmptyState)
+        tabLayout = findViewById(R.id.tabLayout)
+        viewPager = findViewById(R.id.viewPager)
         tvSessionBadge = findViewById(R.id.tvSessionBadge)
         tvSessionTime = findViewById(R.id.tvSessionTime)
         tvLiveStatus = findViewById(R.id.tvLiveStatus)
@@ -157,7 +157,7 @@ class MainActivity : AppCompatActivity() {
         val bridge = StockbitBridge(
             onDataReceived = { json ->
                 lifecycleScope.launch {
-                    orderBookRepo.processJsonData(json)
+                    orderBookRepo.processJsonData(json, topTickers.toSet())
                 }
             },
             onLoginNeeded = {
@@ -296,32 +296,45 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun setupRecyclerView() {
-        rankingAdapter = RankingAdapter { item ->
-            val sheet = DetailBottomSheet(item)
-            sheet.show(supportFragmentManager, "DetailBottomSheet")
-        }
-        rvStockRanking.layoutManager = LinearLayoutManager(this)
-        rvStockRanking.adapter = rankingAdapter
+    private fun setupViewPager() {
+        pagerAdapter = com.scalping.assistant.ui.RankingPagerAdapter(this)
+        viewPager.adapter = pagerAdapter
+
+        com.google.android.material.tabs.TabLayoutMediator(tabLayout, viewPager) { tab, position ->
+            tab.text = when (position) {
+                0 -> "Manual"
+                1 -> "Movers"
+                2 -> "Top Picks"
+                else -> ""
+            }
+        }.attach()
     }
 
     private fun observeData() {
         lifecycleScope.launch {
-            orderBookRepo.rankingFlow.collectLatest { list ->
+            orderBookRepo.manualFlow.collectLatest { list ->
                 runOnUiThread {
-                    if (list.isNotEmpty()) {
-                        layoutEmptyState.visibility = View.GONE
-                        rvStockRanking.visibility = View.VISIBLE
-                        tvStockCount.text = "${list.size} Saham"
-                        rankingAdapter.submitList(list)
+                    pagerAdapter.updateManualData(list)
+                    updateTotalCount()
+                    checkAndNotifyBuySignals(list)
+                }
+            }
+        }
 
-                        // Trigger getar jika ada sinyal STRONG BUY baru
-                        checkAndNotifyBuySignals(list)
-                    } else {
-                        layoutEmptyState.visibility = View.VISIBLE
-                        rvStockRanking.visibility = View.GONE
-                        tvStockCount.text = "0 Saham"
-                    }
+        lifecycleScope.launch {
+            orderBookRepo.moversFlow.collectLatest { list ->
+                runOnUiThread {
+                    pagerAdapter.updateMoversData(list)
+                    updateTotalCount()
+                    checkAndNotifyBuySignals(list)
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            orderBookRepo.topPicksFlow.collectLatest { list ->
+                runOnUiThread {
+                    pagerAdapter.updateTopPicksData(list)
                 }
             }
         }
@@ -333,6 +346,58 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        lifecycleScope.launch {
+            orderBookRepo.bailoutFlow.collectLatest { ticker ->
+                runOnUiThread {
+                    showBailoutAlert(ticker)
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            orderBookRepo.activeTradeFlow.collectLatest { tradeInfo ->
+                runOnUiThread {
+                    val banner = findViewById<View>(R.id.llActiveTradeBanner)
+                    val tvStatus = findViewById<TextView>(R.id.tvActiveTradeStatus)
+                    if (tradeInfo == null) {
+                        banner.visibility = View.GONE
+                    } else {
+                        val (trade, analysis) = tradeInfo
+                        val pnl = ((analysis.lastPrice - trade.entryPrice) / trade.entryPrice) * 100
+                        val pnlStr = String.format("%+.2f%%", pnl).replace(',', '.')
+                        val recommendation = analysis.recommendation.label
+                        tvStatus.text = "${trade.ticker}: $pnlStr ($recommendation)"
+                        banner.visibility = View.VISIBLE
+                        
+                        if (pnl > 0) {
+                            banner.setBackgroundColor(Color.parseColor("#10B981")) // Hijau
+                        } else {
+                            banner.setBackgroundColor(Color.parseColor("#EF4444")) // Merah
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun setActiveTrade(ticker: String, entryPrice: Double) {
+        orderBookRepo.currentActiveTrade = com.scalping.assistant.data.repository.ActiveTrade(ticker, entryPrice)
+        Toast.makeText(this, "Trade $ticker dicatat pada Rp ${entryPrice.toInt()}", Toast.LENGTH_SHORT).show()
+    }
+
+    fun clearActiveTrade() {
+        orderBookRepo.currentActiveTrade = null
+        Toast.makeText(this, "Trade selesai.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showBailoutAlert(ticker: String) {
+        vibrateDeviceHeavy()
+        val builder = android.app.AlertDialog.Builder(this)
+        builder.setTitle("🚨 GUYURAN BANDAR!")
+        builder.setMessage("Saham $ticker sedang diguyur masif (Delta Volume negatif parah). Jika Anda punya barang, pertimbangkan untuk BAILOUT / CUTLOSS sekarang juga!")
+        builder.setPositiveButton("Mengerti") { dialog, _ -> dialog.dismiss() }
+        builder.show()
     }
 
     private fun checkAndNotifyBuySignals(list: List<StockAnalysis>) {
@@ -344,6 +409,12 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "🔥 Sinyal Beli Terdeteksi: ${sb.ticker} (Skor ${sb.score})", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    private fun updateTotalCount() {
+        val manualCount = orderBookRepo.manualFlow.value.size
+        val moversCount = orderBookRepo.moversFlow.value.size
+        tvStockCount.text = "${manualCount + moversCount} Saham"
     }
 
     private fun vibrateDevice() {
@@ -359,6 +430,23 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Exception) {
             // Ignore vibration error if not permitted
+        }
+    }
+
+    private fun vibrateDeviceHeavy() {
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val timings = longArrayOf(0, 500, 200, 500, 200, 1000)
+                    val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
+                    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(longArrayOf(0, 500, 200, 500, 200, 1000), -1)
+                }
+            }
+        } catch (e: Exception) {
         }
     }
 
