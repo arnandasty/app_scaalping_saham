@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_panel">#0E1424</color>
+    <color name="bg_card">#172036</color>
+    <color name="bg_card_selected">#222F4C</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_muted">#64748B</color>
+
+    <color name="brand_accent">#38BDF8</color>
+    <color name="brand_primary">#0EA5E9</color>
+
+    <color name="signal_green">#10B981</color>
+    <color name="signal_green_bg">#1A3D36</color>
+
+    <color name="signal_yellow">#F59E0B</color>
+    <color name="signal_yellow_bg">#3D351A</color>
+
+    <color name="signal_red">#EF4444</color>
+    <color name="signal_red_bg">#3D1D1D</color>
+
+    <color name="divider_color">#334155</color>
+</resources>
