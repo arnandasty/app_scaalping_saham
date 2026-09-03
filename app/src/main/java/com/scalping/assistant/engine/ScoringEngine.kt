@@ -37,12 +37,22 @@ object ScoringEngine {
         }
         val entryPrice = PriceFraction.roundToValidTick(rawEntry.roundToInt())
 
-        // 2. Target Price: Target konsisten 2% - 3%
-        // Prioritaskan Resistance terdekat yang berjarak minimal +2.0% dari Entry
-        val minTargetPrice = entryPrice * 1.020
+        // 2. Target Price: Smart Take Profit di depan Tembok Offer Tebal
+        val minTargetPrice = entryPrice * 1.018
         val normalTargetPrice = entryPrice * 1.028
 
-        var rawTarget = if (technical.nearestResistance > minTargetPrice) {
+        // Cari apakah ada tembok offer tebal di atas entry
+        val avgOfferLot = if (snapshot.offerLevels.isNotEmpty()) snapshot.offerLevels.map { it.lot }.average() else 0.0
+        val thickWallLevel = snapshot.offerLevels
+            .filter { it.price > entryPrice && it.lot > avgOfferLot * 2.5 && it.lot > 3000 }
+            .minByOrNull { it.price }
+
+        var rawTarget = if (thickWallLevel != null) {
+            // Pasang target 1 tick di bawah tembok atau tepat di harga tembok agar barang pasti laku!
+            val tick = PriceFraction.getTickSize(thickWallLevel.price)
+            val frontRunPrice = thickWallLevel.price - tick
+            if (frontRunPrice >= minTargetPrice) frontRunPrice.toDouble() else thickWallLevel.price.toDouble()
+        } else if (technical.nearestResistance > minTargetPrice) {
             technical.nearestResistance
         } else if (technical.bbUpper > minTargetPrice) {
             technical.bbUpper
@@ -50,8 +60,8 @@ object ScoringEngine {
             normalTargetPrice
         }
 
-        // Jangan target terlalu jauh untuk day trade (maksimal 4.5%)
-        if (rawTarget > entryPrice * 1.045) {
+        // Batas wajar day trade (maksimal 4.0% dari entry)
+        if (rawTarget > entryPrice * 1.040) {
             rawTarget = entryPrice * 1.028
         }
         val targetPrice = PriceFraction.roundUpToValidTick(rawTarget.roundToInt())
@@ -107,7 +117,14 @@ object ScoringEngine {
         // Penyesuaian RR jika < 1.2
         val rrPenalty = if (rrRatio < 1.2) -8 else 0
 
-        val finalScore = (ofScore + effectiveTechScore + marketScore + rrPenalty).coerceIn(0, 100)
+        // Proteksi FOMO: Penalti jika saham sudah terbang terlalu tinggi (> +15%)
+        val overboughtPenalty = when {
+            snapshot.changePercent >= 20.0 -> -15
+            snapshot.changePercent >= 14.0 -> -8
+            else -> 0
+        }
+
+        val finalScore = (ofScore + effectiveTechScore + marketScore + rrPenalty + overboughtPenalty).coerceIn(0, 100)
 
         // 6. Tentukan Rekomendasi
         val recommendation = when {
@@ -122,6 +139,10 @@ object ScoringEngine {
         val warnings = mutableListOf<String>()
 
         reasons.addAll(orderFlow.details)
+
+        if (snapshot.changePercent >= 12.0) {
+            warnings.add("🔥 Saham sudah naik tinggi (+${String.format("%.1f", snapshot.changePercent)}%). Waspadai aksi profit taking / guyuran bandar!")
+        }
 
         if (technical.isSupertrendBullish) {
             reasons.add("🚀 Supertrend Bullish (arah tren utama mendukung).")

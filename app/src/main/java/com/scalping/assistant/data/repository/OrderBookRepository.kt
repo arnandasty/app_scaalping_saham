@@ -83,11 +83,19 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
 
                 currentSnapshots.add(snapshot)
 
-                // Simpan ke riwayat
+                // Simpan ke riwayat hanya jika ada perubahan nyata (mencegah fluktuasi sinyal saat market diam/tutup)
                 val history = historyMap.getOrPut(ticker) { mutableListOf() }
-                history.add(snapshot)
-                if (history.size > MAX_SNAPSHOT_HISTORY) {
-                    history.removeAt(0)
+                val lastHist = history.lastOrNull()
+                val isChanged = (lastHist == null ||
+                        lastHist.lastPrice != snapshot.lastPrice ||
+                        lastHist.totalBidLot != snapshot.totalBidLot ||
+                        lastHist.totalOfferLot != snapshot.totalOfferLot)
+
+                if (isChanged) {
+                    history.add(snapshot)
+                    if (history.size > MAX_SNAPSHOT_HISTORY) {
+                        history.removeAt(0)
+                    }
                 }
             }
 
