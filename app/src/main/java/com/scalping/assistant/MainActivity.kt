@@ -54,19 +54,12 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var injectorScript = ""
     private var moversInjectorScript = ""
-    private var topTickers = listOf<String>()
     private val notifiedBuyTickers = mutableSetOf<String>()
 
     private val scrapingRunnable = object : Runnable {
         override fun run() {
             if (::webView.isInitialized && injectorScript.isNotEmpty()) {
-                val jsCommand = if (topTickers.isNotEmpty()) {
-                    val tickersJson = org.json.JSONArray(topTickers).toString()
-                    "if(typeof window.autoFillTickers === 'function') { window.autoFillTickers($tickersJson); } $injectorScript"
-                } else {
-                    injectorScript
-                }
-                webView.evaluateJavascript(jsCommand, null)
+                webView.evaluateJavascript(injectorScript, null)
             }
             if (::webViewMovers.isInitialized && moversInjectorScript.isNotEmpty()) {
                 webViewMovers.evaluateJavascript(moversInjectorScript, null)
@@ -95,7 +88,8 @@ class MainActivity : AppCompatActivity() {
 
         // Load Stockbit
         webView.loadUrl("https://stockbit.com/orderbook")
-        webViewMovers.loadUrl("https://stockbit.com/orderbook") // Muat halaman yg sama tapi versi Desktop (untuk curi sidebar Movers)
+        // WebView Movers load halaman Market khusus TOP FREQ / TOP VALUE untuk dapat saham hot hari ini
+        webViewMovers.loadUrl("https://stockbit.com/market/hot")
 
         // Mulai polling timer
         handler.post(sessionTimerRunnable)
@@ -121,7 +115,7 @@ class MainActivity : AppCompatActivity() {
 
         try {
             injectorScript = assets.open("stockbit_injector.js").bufferedReader().use { it.readText() }
-            moversInjectorScript = assets.open("movers_injector.js").bufferedReader().use { it.readText() }
+            moversInjectorScript = injectorScript // WebView Movers juga pakai injector yang sama untuk baca orderbook!
         } catch (e: Exception) {
             tvStatusLog.text = "Gagal memuat injector: ${e.message}"
         }
@@ -158,7 +152,8 @@ class MainActivity : AppCompatActivity() {
         val bridge = StockbitBridge(
             onDataReceived = { json ->
                 lifecycleScope.launch {
-                    orderBookRepo.processJsonData(json, topTickers.toSet())
+                    // Data dari WebView utama SELALU masuk ke tab Manual
+                    orderBookRepo.processJsonData(json)
                 }
             },
             onLoginNeeded = {
@@ -181,30 +176,37 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(bridge, "Android")
         
         val moversBridge = object {
+            // Menerima data ORDERBOOK lengkap dari webViewMovers
             @android.webkit.JavascriptInterface
-            fun onTopTickers(jsonArray: String) {
-                try {
-                    val array = org.json.JSONArray(jsonArray)
-                    val newTickers = mutableListOf<String>()
-                    for (i in 0 until array.length()) {
-                        newTickers.add(array.getString(i))
-                    }
-                    if (newTickers.isNotEmpty()) {
-                        topTickers = newTickers
-                    }
-                } catch (e: Exception) {
-                    // Ignore
+            fun onOrderBookData(jsonArray: String) {
+                lifecycleScope.launch {
+                    // Data dari WebView movers SELALU masuk ke tab Movers
+                    orderBookRepo.processMoversJsonData(jsonArray)
                 }
             }
 
             @android.webkit.JavascriptInterface
             fun onDebug(msg: String) {
                 runOnUiThread {
-                    tvStatusLog.text = "Movers Debug: $msg"
+                    tvStatusLog.text = "Movers: $msg"
+                }
+            }
+
+            @android.webkit.JavascriptInterface
+            fun onScrapingStatus(status: String) {
+                runOnUiThread {
+                    tvStatusLog.text = "Movers: $status"
+                }
+            }
+
+            @android.webkit.JavascriptInterface
+            fun onScrapingError(err: String) {
+                runOnUiThread {
+                    tvStatusLog.text = "Movers Err: $err"
                 }
             }
         }
-        webViewMovers.addJavascriptInterface(moversBridge, "MoversAndroid")
+        webViewMovers.addJavascriptInterface(moversBridge, "Android") // Pakai nama 'Android' agar pakai stockbit_injector.js yang sama!
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
