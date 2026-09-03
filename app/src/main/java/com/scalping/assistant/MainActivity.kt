@@ -207,6 +207,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (tickers.isNotEmpty()) {
                         moversTickers = tickers
+                        // Langsung proses dengan analisis teknikal agar tab Movers langsung terisi
+                        lifecycleScope.launch {
+                            orderBookRepo.processMoversTickerData(jsonArray)
+                        }
                     }
                 } catch (e: Exception) { /* ignore */ }
             }
@@ -216,7 +220,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { tvStatusLog.text = "Movers: $msg" }
             }
 
-            // === Dari stockbit_injector.js: data orderbook LENGKAP ===
+            // === Dari stockbit_injector.js: data orderbook LENGKAP (bonus jika berhasil) ===
             @android.webkit.JavascriptInterface
             fun onOrderBookData(jsonString: String) {
                 lifecycleScope.launch {
@@ -225,14 +229,10 @@ class MainActivity : AppCompatActivity() {
             }
 
             @android.webkit.JavascriptInterface
-            fun onLoginRequired() {
-                // Movers WebView butuh login — akan otomatis sync saat webView utama login
-            }
+            fun onLoginRequired() { }
 
             @android.webkit.JavascriptInterface
-            fun onScrapingStatus(status: String) {
-                // Tidak perlu tampilkan status dari movers scraper
-            }
+            fun onScrapingStatus(status: String) { }
 
             @android.webkit.JavascriptInterface
             fun onScrapingError(error: String) {

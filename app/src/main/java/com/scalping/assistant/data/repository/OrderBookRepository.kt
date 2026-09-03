@@ -299,6 +299,65 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
     }
 
     /**
+     * Proses ticker dari sidebar Movers dengan analisis TEKNIKAL saja (Yahoo Finance).
+     * Dipakai sebagai fallback saat data orderbook belum tersedia.
+     * Jika nanti onOrderBookData masuk, data ini akan ditimpa oleh processMoversJsonData.
+     */
+    suspend fun processMoversTickerData(jsonString: String) {
+        try {
+            val jsonArray = JSONArray(jsonString)
+            if (jsonArray.length() == 0) return
+
+            val sessionInfo = MarketSession.getCurrentSession()
+            val analyses = mutableListOf<StockAnalysis>()
+
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val ticker = obj.getString("ticker").trim().uppercase()
+                val lastPrice = obj.optInt("lastPrice", 0)
+                val changePercent = obj.optDouble("changePercent", 0.0)
+
+                // Estimasi harga jika sidebar tidak mengirim harga (lastPrice=0)
+                // Tetap proses agar minimal tampil di tab
+                val priceToUse = if (lastPrice > 0) lastPrice else 100
+
+                val snapshot = OrderBookSnapshot(
+                    ticker = ticker,
+                    lastPrice = priceToUse,
+                    changePercent = changePercent,
+                    timestamp = System.currentTimeMillis(),
+                    bidLevels = emptyList(),
+                    offerLevels = emptyList(),
+                    totalBidLot = 0L,
+                    totalOfferLot = 0L
+                )
+
+                val candles = yahooRepo.fetchIntradayCandles(ticker)
+                val techResult = TechnicalAnalyzer.analyze(ticker, candles, priceToUse.toDouble())
+
+                val ofResult = com.scalping.assistant.data.models.OrderFlowResult(
+                    ticker = ticker,
+                    totalScore = 15,
+                    details = listOf("📊 Data Movers (teknikal). Orderbook aktif saat market buka.")
+                )
+
+                val prevRec = previousRecommendations["movers_$ticker"]
+                val analysis = ScoringEngine.generateAnalysis(snapshot, ofResult, techResult, sessionInfo, prevRec)
+                previousRecommendations["movers_$ticker"] = analysis.recommendation
+                analyses.add(analysis)
+            }
+
+            if (analyses.isNotEmpty()) {
+                _moversFlow.value = analyses.sortedByDescending { it.score }
+                refreshTopPicks()
+            }
+
+        } catch (e: Exception) {
+            _statusFlow.value = "Error movers: ${e.localizedMessage}"
+        }
+    }
+
+    /**
      * Gabungkan Manual + Movers lalu ambil Top Picks (skor ≥75 & RR ≥1.5)
      */
     private fun refreshTopPicks() {

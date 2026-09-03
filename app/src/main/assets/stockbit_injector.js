@@ -29,7 +29,7 @@ window.autoFillTickers = function(tickers) {
         // Trigger events agar React mengenali perubahan
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+        // JANGAN dispatch Enter - menyebabkan navigasi ke /symbol/TICKER
     }
 };
 
