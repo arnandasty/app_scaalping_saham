@@ -37,9 +37,7 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var webViewMovers: WebView   // Top Hot / Top Value
-    private lateinit var webViewFreq: WebView      // Top Frequency
-    private lateinit var webViewVolume: WebView    // Top Volume
+    private lateinit var webViewMovers: WebView // Desktop mode orderbook untuk scrape sidebar Movers
     private lateinit var progressBar: ProgressBar
     private lateinit var tabLayout: com.google.android.material.tabs.TabLayout
     private lateinit var viewPager: androidx.viewpager2.widget.ViewPager2
@@ -66,13 +64,7 @@ class MainActivity : AppCompatActivity() {
             if (::webViewMovers.isInitialized && moversInjectorScript.isNotEmpty()) {
                 webViewMovers.evaluateJavascript(moversInjectorScript, null)
             }
-            if (::webViewFreq.isInitialized && moversInjectorScript.isNotEmpty()) {
-                webViewFreq.evaluateJavascript(moversInjectorScript, null)
-            }
-            if (::webViewVolume.isInitialized && moversInjectorScript.isNotEmpty()) {
-                webViewVolume.evaluateJavascript(moversInjectorScript, null)
-            }
-            handler.postDelayed(this, 3000L) // Poll setiap 3 detik
+            handler.postDelayed(this, 3000L)
         }
     }
 
@@ -96,12 +88,8 @@ class MainActivity : AppCompatActivity() {
 
         // Load Stockbit
         webView.loadUrl("https://stockbit.com/orderbook")
-        // WebView Movers: Top Hot/Value (saham paling banyak nilai transaksinya)
-        webViewMovers.loadUrl("https://stockbit.com/market/hot")
-        // WebView Freq: Top Frequency (saham paling ramai jumlah transaksinya)
-        webViewFreq.loadUrl("https://stockbit.com/market/freq")
-        // WebView Volume: Top Volume (saham dengan volume lot terbesar)
-        webViewVolume.loadUrl("https://stockbit.com/market/volume")
+        // WebView Movers: Load halaman orderbook yang sama tapi versi Desktop untuk scrape sidebar Movers
+        webViewMovers.loadUrl("https://stockbit.com/orderbook")
 
         // Mulai polling timer
         handler.post(sessionTimerRunnable)
@@ -111,8 +99,6 @@ class MainActivity : AppCompatActivity() {
     private fun initViews() {
         webView = findViewById(R.id.webViewStockbit)
         webViewMovers = findViewById(R.id.webViewMovers)
-        webViewFreq = findViewById(R.id.webViewFreq)
-        webViewVolume = findViewById(R.id.webViewVolume)
         progressBar = findViewById(R.id.webViewProgressBar)
         tabLayout = findViewById(R.id.tabLayout)
         viewPager = findViewById(R.id.viewPager)
@@ -129,7 +115,7 @@ class MainActivity : AppCompatActivity() {
 
         try {
             injectorScript = assets.open("stockbit_injector.js").bufferedReader().use { it.readText() }
-            moversInjectorScript = injectorScript // WebView Movers juga pakai injector yang sama untuk baca orderbook!
+            moversInjectorScript = assets.open("movers_injector.js").bufferedReader().use { it.readText() }
         } catch (e: Exception) {
             tvStatusLog.text = "Gagal memuat injector: ${e.message}"
         }
@@ -160,24 +146,9 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            userAgentString = desktopUserAgent
-        }
-
-        webViewFreq.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            cacheMode = WebSettings.LOAD_DEFAULT
-            userAgentString = desktopUserAgent
-        }
-        webViewVolume.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            cacheMode = WebSettings.LOAD_DEFAULT
-            userAgentString = desktopUserAgent
+            userAgentString = desktopUserAgent // Desktop mode agar sidebar Movers muncul
         }
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewMovers, true)
-        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewFreq, true)
-        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewVolume, true)
 
         val bridge = StockbitBridge(
             onDataReceived = { json ->
@@ -206,39 +177,22 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(bridge, "Android")
         
         val moversBridge = object {
-            // Menerima data ORDERBOOK lengkap dari webViewMovers
+            // Menerima data ticker+harga dari sidebar Movers
             @android.webkit.JavascriptInterface
-            fun onOrderBookData(jsonArray: String) {
+            fun onMoversData(jsonArray: String) {
                 lifecycleScope.launch {
-                    // Data dari WebView movers SELALU masuk ke tab Movers
-                    orderBookRepo.processMoversJsonData(jsonArray)
+                    orderBookRepo.processMoversTickerData(jsonArray)
                 }
             }
 
             @android.webkit.JavascriptInterface
-            fun onDebug(msg: String) {
+            fun onMoversDebug(msg: String) {
                 runOnUiThread {
                     tvStatusLog.text = "Movers: $msg"
                 }
             }
-
-            @android.webkit.JavascriptInterface
-            fun onScrapingStatus(status: String) {
-                runOnUiThread {
-                    tvStatusLog.text = "Movers: $status"
-                }
-            }
-
-            @android.webkit.JavascriptInterface
-            fun onScrapingError(err: String) {
-                runOnUiThread {
-                    tvStatusLog.text = "Movers Err: $err"
-                }
-            }
         }
-        webViewMovers.addJavascriptInterface(moversBridge, "Android") // Data masuk ke tab Movers
-        webViewFreq.addJavascriptInterface(moversBridge, "Android")   // Data top freq juga masuk ke tab Movers
-        webViewVolume.addJavascriptInterface(moversBridge, "Android") // Data top volume juga masuk ke tab Movers
+        webViewMovers.addJavascriptInterface(moversBridge, "Android")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
@@ -520,7 +474,5 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(sessionTimerRunnable)
         webView.destroy()
         webViewMovers.destroy()
-        webViewFreq.destroy()
-        webViewVolume.destroy()
     }
 }

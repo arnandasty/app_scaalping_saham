@@ -4,5 +4,5 @@
     <string name="market_session_title">Sesi Pasar</string>
     <string name="ai_ranking_title">AI Smart Ranking</string>
     <string name="live_badge">● LIVE</string>
-    <string name="empty_ranking_msg">Menunggu data Orderbook dari Stockbit...\nBuka halaman Stockbit Orderbook di atas.</string>
+    <string name="empty_ranking_msg">Memuat data saham...\nData akan muncul otomatis setelah halaman Stockbit terbaca.</string>
 </resources>

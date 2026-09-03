@@ -12,23 +12,9 @@
         android:layout_height="0dp"
         android:layout_weight="55">
 
-        <!-- Hidden WebView untuk Scraping Top Hot/Value Movers -->
+        <!-- Hidden WebView: Desktop mode untuk scrape sidebar Movers dari halaman orderbook -->
         <WebView
             android:id="@+id/webViewMovers"
-            android:layout_width="1280dp"
-            android:layout_height="720dp"
-            android:alpha="0" />
-
-        <!-- Hidden WebView untuk Scraping Top Frequency (saham paling ramai transaksi) -->
-        <WebView
-            android:id="@+id/webViewFreq"
-            android:layout_width="1280dp"
-            android:layout_height="720dp"
-            android:alpha="0" />
-
-        <!-- Hidden WebView untuk Scraping Top Volume (saham dengan volume lot terbesar) -->
-        <WebView
-            android:id="@+id/webViewVolume"
             android:layout_width="1280dp"
             android:layout_height="720dp"
             android:alpha="0" />
