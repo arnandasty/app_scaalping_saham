@@ -36,7 +36,8 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         val etLotAmount: EditText = view.findViewById(R.id.etLotAmount)
 
         val sign = if (item.changePercent > 0) "+" else ""
-        detailTicker.text = "${item.ticker} ($sign${item.changePercent}%)"
+        val priceFormatted = formatPrice(item.lastPrice)
+        detailTicker.text = "${item.ticker} Rp $priceFormatted ($sign${item.changePercent}%)"
         
         if (item.changePercent > 0) {
             detailTicker.setTextColor(Color.parseColor("#10B981"))

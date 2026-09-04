@@ -55,7 +55,8 @@ class RankingAdapter(
             tvRank.text = "#$rank"
             
             val sign = if (item.changePercent > 0) "+" else ""
-            tvTicker.text = "${item.ticker} ($sign${item.changePercent}%)"
+            val priceFormatted = formatPrice(item.lastPrice)
+            tvTicker.text = "${item.ticker} Rp $priceFormatted ($sign${item.changePercent}%)"
             
             if (item.changePercent > 0) {
                 tvTicker.setTextColor(Color.parseColor("#10B981")) // Green

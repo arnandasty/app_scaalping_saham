@@ -17,6 +17,7 @@ class PortfolioFragment : Fragment() {
     private lateinit var rvPortfolio: androidx.recyclerview.widget.RecyclerView
     private lateinit var layoutEmpty: LinearLayout
     private lateinit var portfolioAdapter: PortfolioAdapter
+    private var pendingTrades: List<PortfolioTrade>? = null
 
     var onTakeProfit: ((PortfolioTrade) -> Unit)? = null
     var onCutLoss: ((PortfolioTrade) -> Unit)? = null
@@ -37,11 +38,16 @@ class PortfolioFragment : Fragment() {
         rvPortfolio.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(requireContext())
         rvPortfolio.adapter = portfolioAdapter
 
+        pendingTrades?.let { updateData(it) }
+
         return view
     }
 
     fun updateData(trades: List<PortfolioTrade>) {
-        if (!::portfolioAdapter.isInitialized) return
+        if (!::portfolioAdapter.isInitialized) {
+            pendingTrades = trades
+            return
+        }
         if (trades.isEmpty()) {
             rvPortfolio.visibility = View.GONE
             layoutEmpty.visibility = View.VISIBLE
