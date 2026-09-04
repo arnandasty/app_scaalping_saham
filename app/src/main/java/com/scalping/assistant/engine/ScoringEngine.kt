@@ -107,11 +107,9 @@ object ScoringEngine {
                 // Lebih baik pasang target di atas tembok dan berharap tembok tertembus
                 normalProfitTarget
             }
-        } else if (technical.nearestResistance > minProfitTarget) {
-            rawTarget = technical.nearestResistance
-        } else if (technical.bbUpper > minProfitTarget) {
-            rawTarget = technical.bbUpper
         } else {
+            // User request: Target jual dihitung/dipertimbangkan berdasarkan bid offer saja
+            // Jika tidak ada antrean offer tebal (bid offer), kita gunakan default
             rawTarget = normalProfitTarget
         }
 
@@ -128,19 +126,12 @@ object ScoringEngine {
         val targetPrice = PriceFraction.roundUpToValidTick(rawTarget.roundToInt())
 
         // ============================================================
-        // 3. STOP LOSS — Prioritas: Tembok Bid, lalu Support, lalu 1.5%
+        // 3. STOP LOSS — Prioritas: Support dari Analisis Teknikal
         // ============================================================
+        // User request: "untuk support dan resistance itu dihitung berdasarkan analisis teknikal nya aja"
         val maxStopLoss = entryPrice * 0.985
 
-        val avgBidLot = if (snapshot.bidLevels.isNotEmpty()) snapshot.bidLevels.map { it.lot }.average() else 0.0
-        val thickBidWall = snapshot.bidLevels
-            .filter { it.price < entryPrice && it.lot > avgBidLot * 2.5 && (it.lot.toLong() * 100 * it.price) > 200_000_000L }
-            .maxByOrNull { it.price }
-
-        var rawSL = if (thickBidWall != null) {
-            val tick = PriceFraction.getTickSize(thickBidWall.price)
-            thickBidWall.price.toDouble() - tick
-        } else if (technical.nearestSupport in (entryPrice * 0.96)..maxStopLoss) {
+        var rawSL = if (technical.nearestSupport in (entryPrice * 0.96)..maxStopLoss) {
             technical.nearestSupport
         } else if (technical.bbLower in (entryPrice * 0.96)..maxStopLoss) {
             technical.bbLower

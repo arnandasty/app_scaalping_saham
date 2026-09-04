@@ -49,7 +49,7 @@ window.autoFillTickers = function(tickers) {
             if (urlMatch && urlMatch[1].toUpperCase() === fallbackTicker.toUpperCase()) return;
 
             // CARA 1: Gunakan Global Search Bar di Header agar React Router menangani navigasinya
-            var globalSearch = document.querySelector('header input, nav input, [class*="header"] input');
+            var globalSearch = document.querySelector('input[data-cy="top-navbar-search-input-desktop"], #stockbit-header-web input[type="search"]');
             if (globalSearch) {
                 var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
                 if (nativeInputValueSetter) {
