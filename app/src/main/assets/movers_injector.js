@@ -47,16 +47,21 @@
                 var row = img.closest('tr');
                 if (row) {
                     var tds = row.querySelectorAll('td');
-                    if (tds.length >= 3) {
+                    if (tds.length >= 2) {
                         // Iterasi dari td indeks 1 (mengabaikan kolom ticker di td 0)
                         for (var c = 1; c < tds.length; c++) {
                             var cellText = tds[c].innerText || '';
-                            // Hanya ambil angka yang murni harga (tidak ada persen, tidak ada B/M/K, tidak ada +)
-                            var cellNum = parseFloat(cellText.replace(/,/g, ''));
-                            if (!isNaN(cellNum) && cellNum >= 50 && cellNum <= 99000 && 
-                                !cellText.includes('%') && !cellText.includes('+') && 
-                                !/[BMK]/.test(cellText.toUpperCase()) && price === 0) {
-                                price = Math.round(cellNum);
+                            
+                            // Split by whitespace untuk menangani sel yang berisi harga \n persentase
+                            var tokens = cellText.split(/\s+/);
+                            for (var k = 0; k < tokens.length; k++) {
+                                var t = tokens[k];
+                                var clean = t.replace(/[.,]/g, ''); // Hapus titik dan koma ribuan
+                                var val = parseInt(clean, 10);
+                                // Hanya ambil angka murni tanpa huruf, %, atau +
+                                if (!isNaN(val) && val >= 50 && val <= 99000 && !/[a-zA-Z%+]/.test(t) && price === 0) {
+                                    price = val;
+                                }
                             }
                             
                             // Cari persentase di kolom mana pun
@@ -77,9 +82,10 @@
                         var tokens = rowText.split(/\s+/);
                         for (var i = 0; i < tokens.length; i++) {
                             var t = tokens[i];
-                            var val = parseFloat(t.replace(/,/g, ''));
-                            if (!isNaN(val) && val >= 50 && val <= 99000 && !t.includes('%') && !t.includes('+') && !/[BMK]/.test(t.toUpperCase()) && price === 0) {
-                                price = Math.round(val);
+                            var clean = t.replace(/[.,]/g, '');
+                            var val = parseInt(clean, 10);
+                            if (!isNaN(val) && val >= 50 && val <= 99000 && !/[a-zA-Z%+]/.test(t) && price === 0) {
+                                price = val;
                             }
                         }
                         var fallbackPctMatch = rowText.match(/([+-]?\d+[.,]\d+)%/);

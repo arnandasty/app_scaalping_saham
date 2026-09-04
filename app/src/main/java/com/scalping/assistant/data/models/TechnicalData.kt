@@ -11,6 +11,7 @@ data class Candle(
 
 data class TechnicalResult(
     val ticker: String,
+    val lastClosePrice: Double = 0.0,
     val vwap: Double = 0.0,
     val mfi: Double = 0.0,
 
@@ -36,6 +37,16 @@ data class TechnicalResult(
     val fibScore: Int = 0, // 0 - 6
     val nearestResistance: Double = 0.0,
     val nearestSupport: Double = 0.0,
+    
+    val nearestResistance2: Double = 0.0,
+    val nearestSupport2: Double = 0.0,
+
+    // === Filter Penguatan Sinyal (5-Layer) ===
+    val ema50: Double = 0.0,            // EMA 50 hari untuk filter tren makro
+    val isBelowEma50: Boolean = false,  // true jika harga di bawah EMA 50 (tren mayor bearish)
+    val volumeRatio: Double = 1.0,      // Volume hari ini vs rata-rata 5 hari (< 1 = sepi)
+    val todayHigh: Double = 0.0,        // High harga hari ini (untuk filter cooldown drop)
+    val prevHighScore: Int = 0,         // Skor snapshot sebelumnya (untuk double confirm)
 
     val totalScore: Int = 0 // 0 - 30
 )

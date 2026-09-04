@@ -39,7 +39,10 @@ data class PortfolioTrade(
     var aiReason: String = "",
     var targetPrice: Int = 0,
     var stopLoss: Int = 0,
-    var isActive: Boolean = true
+    var isActive: Boolean = true,
+    var closePrice: Int = 0,
+    var closeTime: Long = 0L,
+    var status: String = "ACTIVE" // ACTIVE, TP, SL, MANUAL
 )
 
 // ============================================================
@@ -108,13 +111,13 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
         }
     }
 
-    fun addPortfolioTrade(ticker: String, entryPrice: Int, lot: Int): PortfolioTrade {
+    fun addPortfolioTrade(ticker: String, entryPrice: Int, lot: Int, targetPrice: Int, stopLoss: Int): PortfolioTrade {
         val trade = PortfolioTrade(
             ticker = ticker.uppercase(),
             entryPrice = entryPrice,
             lot = lot,
-            targetPrice = (entryPrice * 1.025).toInt(), // Default target 2.5%
-            stopLoss = (entryPrice * 0.985).toInt()     // Default SL 1.5%
+            targetPrice = targetPrice,
+            stopLoss = stopLoss
         )
         _portfolio.add(trade)
         _portfolioFlow.value = _portfolio.toList()
@@ -125,17 +128,35 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
         return trade
     }
 
-    fun closePortfolioTrade(tradeId: String) {
-        _portfolio.removeAll { it.id == tradeId }
-        _portfolioFlow.value = _portfolio.toList()
-        if (_portfolio.isEmpty()) {
+    fun closePortfolioTrade(tradeId: String, closePrice: Int = 0, status: String = "MANUAL") {
+        val trade = _portfolio.find { it.id == tradeId }
+        if (trade != null) {
+            trade.isActive = false
+            trade.closePrice = if (closePrice > 0) closePrice else trade.currentPrice
+            trade.closeTime = System.currentTimeMillis()
+            trade.status = status
+            _portfolioFlow.value = _portfolio.toList()
+        }
+        if (_portfolio.none { it.isActive }) {
             currentActiveTrade = null
         }
     }
 
+    fun deletePortfolioTrade(tradeId: String) {
+        _portfolio.removeAll { it.id == tradeId }
+        _portfolioFlow.value = _portfolio.toList()
+    }
+
     fun closeAllPortfolioTrades() {
-        _portfolio.clear()
-        _portfolioFlow.value = emptyList()
+        for (trade in _portfolio) {
+            if (trade.isActive) {
+                trade.isActive = false
+                trade.closePrice = trade.currentPrice
+                trade.closeTime = System.currentTimeMillis()
+                trade.status = "MANUAL"
+            }
+        }
+        _portfolioFlow.value = _portfolio.toList()
         currentActiveTrade = null
     }
 
@@ -154,15 +175,19 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
 
             // Tentukan aksi AI berdasarkan kondisi posisi
             val aiAction = when {
-                currentPrice >= analysis.targetPrice -> "🎯 TAKE PROFIT"
-                currentPrice <= analysis.stopLoss -> "🛑 CUT LOSS"
+                currentPrice >= trade.targetPrice -> "🎯 TAKE PROFIT"
+                currentPrice <= trade.stopLoss -> "🛑 CUT LOSS"
                 analysis.recommendation == Recommendation.AVOID && analysis.score < 40 -> "⚠️ PERTIMBANGKAN CUT"
                 analysis.recommendation == Recommendation.STRONG_BUY -> "🔥 TAHAN / TAMBAH"
                 analysis.recommendation == Recommendation.BUY -> "✅ TAHAN"
                 else -> "👁 PANTAU"
             }
 
-            val aiReason = analysis.reasons.firstOrNull() ?: analysis.warnings.firstOrNull() ?: "Analisis berjalan..."
+            val aiReason = analysis.warnings.firstOrNull { it.contains("Guyuran") || it.contains("HAKI") || it.contains("Bearish") || it.contains("Fake Wall") || it.contains("ARA") || it.contains("naik tinggi") }
+                ?: analysis.reasons.firstOrNull { it.contains("Akumulasi") || it.contains("HAKA") || it.contains("Bullish") || it.contains("Breakout") }
+                ?: analysis.reasons.firstOrNull { !it.contains("Target") && !it.contains("Entry") && !it.contains("Spread") }
+                ?: analysis.warnings.firstOrNull { !it.contains("Target") && !it.contains("Entry") && !it.contains("Spread") }
+                ?: "Memantau pergerakan harga..."
 
             // Buat objek baru agar StateFlow mendeteksi perubahan state
             _portfolio[i] = trade.copy(
@@ -171,8 +196,7 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
                 currentScore = analysis.score,
                 pnlPercent = pnlPercent,
                 pnlRupiah = pnlRupiah,
-                targetPrice = analysis.targetPrice,
-                stopLoss = analysis.stopLoss,
+                // Kita TIDAK overwrite targetPrice dan stopLoss agar statis sesuai rencana awal user
                 aiAction = aiAction,
                 aiReason = aiReason
             )

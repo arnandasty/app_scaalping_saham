@@ -20,7 +20,9 @@ object ScoringEngine {
         tapeReading: com.scalping.assistant.data.models.TapeReadingStat? = null
     ): StockAnalysis {
         val ticker = snapshot.ticker
-        val currentPrice = if (snapshot.lastPrice > 0) snapshot.lastPrice else (snapshot.offerLevels.firstOrNull()?.price ?: 100)
+        val currentPrice = if (snapshot.lastPrice > 50) snapshot.lastPrice 
+                           else if (snapshot.offerLevels.isNotEmpty()) snapshot.offerLevels.first().price 
+                           else technical.lastClosePrice.toInt()
 
         // ============================================================
         // 1. DYNAMIC ENTRY PRICE — Strategi Pullback diprioritaskan
@@ -34,6 +36,23 @@ object ScoringEngine {
         // bukan hanya dari delta score yang masih bisa noise
         val isConfirmedBreakout = orderFlow.hasBreakoutSignal && orderFlow.deltaVolumeScore >= 22
 
+        // Cari tembok bid tebal di bawah atau di harga saat ini (Benteng Order Book)
+        val avgBidLot = if (snapshot.bidLevels.isNotEmpty()) snapshot.bidLevels.map { it.lot }.average() else 0.0
+        val maxBidLot = if (snapshot.bidLevels.isNotEmpty()) snapshot.bidLevels.maxOf { it.lot } else 0L
+
+        val thickBidWall = snapshot.bidLevels
+            .filter {
+                val value = it.lot.toLong() * 100 * it.price
+                val isProminent = it.lot >= maxBidLot * 0.8 // Minimal 80% dari tembok terbesar
+                val isTwiceAverage = it.lot > avgBidLot * 1.5 // Menonjol dari rata-rata
+                
+                it.price <= currentPrice &&
+                it.price >= currentPrice * 0.96 && // Maksimal 4% di bawah harga last
+                (isProminent || isTwiceAverage) && 
+                value > 500_000_000L // Tetap harus punya nilai yang signifikan (minimal 500 Juta)
+            }
+            .maxByOrNull { it.price } // Tembok bid terdekat di bawah/di harga saat ini
+
         var rawEntry: Double
         var entryNote = ""
 
@@ -41,16 +60,28 @@ object ScoringEngine {
             // Breakout dikonfirmasi → Entry di offer (hajar kanan)
             rawEntry = bestOffer.toDouble()
             entryNote = "Buy on Breakout (Hajar Offer)"
-        } else {
-            // === Strategi Pullback: Antre di bawah harga saat ini ===
-            // Tujuan: hindari beli di puncak sesaat, tunggu sedikit turun ke area bid/support
+        } else if (thickBidWall != null) {
+            // Prioritas 1: Ada Tembok Bid Tebal (Benteng Pertahanan Order Book)
+            val bidTick = PriceFraction.getTickSize(thickBidWall.price)
+            val frontRunBid = thickBidWall.price + bidTick
 
+            if (frontRunBid < currentPrice) {
+                // Antre 1 tick di atas tembok tebal agar order cepat match sebelum tembok tertembus
+                rawEntry = frontRunBid.toDouble()
+                entryNote = "Buy on Bid Support (+1 Tick di Rp $frontRunBid)"
+            } else {
+                // Antre tepat di tembok tebal
+                rawEntry = thickBidWall.price.toDouble()
+                entryNote = "Buy on Bid Wall (Rp ${thickBidWall.price})"
+            }
+        } else {
+            // Prioritas 2 (Fallback): Tidak ada tembok bid tebal → gunakan strategi pullback teknikal
             val pullbackTarget = currentPrice * 0.992 // Antre ~0.8% di bawah harga last
 
             rawEntry = when {
                 // Jika ada support kuat di dekat pullback zone, antre di sana
                 technical.nearestSupport in (currentPrice * 0.97)..pullbackTarget -> {
-                    entryNote = "Buy on Support"
+                    entryNote = "Buy on Support Teknikal"
                     technical.nearestSupport
                 }
                 // Jika best bid lebih baik dari harga saat ini (banyak antrean beli)
@@ -61,7 +92,6 @@ object ScoringEngine {
                 // Default: antre sedikit di bawah harga terkini (tidak hajar langsung)
                 else -> {
                     entryNote = "Momentum (Beli Bertahap)"
-                    // Ambil posisi di antara bid dan offer, condong ke bid
                     bestBid.toDouble()
                 }
             }
@@ -86,9 +116,13 @@ object ScoringEngine {
 
         val thickWallLevel = snapshot.offerLevels
             .filter {
+                val value = it.lot.toLong() * 100 * it.price
+                val isProminent = it.lot >= maxOfferLot * 0.8
+                val isTwiceAverage = it.lot > avgOfferLot * 1.5
+                
                 it.price > entryPrice &&
-                ((it.lot > avgOfferLot * 1.5 && it.lot == maxOfferLot) || it.lot > avgOfferLot * 2.5) &&
-                (it.lot.toLong() * 100 * it.price) > 300_000_000L
+                (isProminent || isTwiceAverage) && 
+                value > 500_000_000L
             }
             .minByOrNull { it.price }
 
@@ -127,12 +161,21 @@ object ScoringEngine {
         val targetPrice = PriceFraction.roundUpToValidTick(rawTarget.roundToInt())
 
         // ============================================================
-        // 3. STOP LOSS — Prioritas: Support dari Analisis Teknikal
+        // 3. STOP LOSS — Prioritas: Tembok Bid atau Support Teknikal
         // ============================================================
-        // User request: "untuk support dan resistance itu dihitung berdasarkan analisis teknikal nya aja"
         val maxStopLoss = entryPrice * 0.985
 
-        var rawSL = if (technical.nearestSupport in (entryPrice * 0.96)..maxStopLoss) {
+        var rawSL = if (thickBidWall != null) {
+            val bidTick = PriceFraction.getTickSize(thickBidWall.price)
+            val wallSL = (thickBidWall.price - bidTick).toDouble()
+            if (wallSL in (entryPrice * 0.95)..maxStopLoss) {
+                wallSL
+            } else if (technical.nearestSupport in (entryPrice * 0.96)..maxStopLoss) {
+                technical.nearestSupport
+            } else {
+                entryPrice * 0.985
+            }
+        } else if (technical.nearestSupport in (entryPrice * 0.96)..maxStopLoss) {
             technical.nearestSupport
         } else if (technical.bbLower in (entryPrice * 0.96)..maxStopLoss) {
             technical.bbLower
@@ -252,6 +295,41 @@ object ScoringEngine {
         val finalScore = (ofScore + effectiveTechScore + marketScore + tapeReadingScore + rrPenalty + overboughtPenalty + confidencePenalty).coerceIn(0, 100)
 
         // ============================================================
+        // 5B. FILTER LAYER 1: Volume Ratio
+        //     Jika volume hari ini < 80% rata-rata 5 hari, sinyal kurang valid
+        // ============================================================
+        val volumeRatio = technical.volumeRatio
+        val volumePenalty = when {
+            volumeRatio < 0.5 -> -15   // Volume sangat sepi
+            volumeRatio < 0.8 -> -10   // Volume di bawah normal
+            else -> 0
+        }
+        val lowVolumeBlock = volumeRatio < 1.0 // Volume di bawah normal = blokir Strong Buy
+
+        // ============================================================
+        // 5C. FILTER LAYER 2: EMA 50 Tren Makro
+        //     Jika harga di bawah EMA 50, saham dalam tren mayor turun
+        // ============================================================
+        val isBelowEma50 = technical.isBelowEma50
+        val ema50Penalty = if (isBelowEma50) -12 else 0
+
+        // ============================================================
+        // 5D. FILTER LAYER 3: Cooldown Drop dari High Hari Ini
+        //     Jika harga sudah drop 2%+ dari high hari ini, hati-hati reversal gagal
+        // ============================================================
+        val todayHigh = technical.todayHigh
+        val dropFromHigh = if (todayHigh > 0) (todayHigh - currentPrice) / todayHigh else 0.0
+        val dropPenalty = when {
+            dropFromHigh >= 0.03 -> -15  // Drop 3%+ dari high
+            dropFromHigh >= 0.02 -> -8   // Drop 2%+ dari high
+            else -> 0
+        }
+        val hardDropBlock = dropFromHigh >= 0.03 // Drop 3%+ = blokir Strong Buy keras
+
+        // Skor final setelah semua filter
+        val filteredScore = (finalScore + volumePenalty + ema50Penalty + dropPenalty).coerceIn(0, 100)
+
+        // ============================================================
         // 6. REKOMENDASI — Hysteresis yang diperkuat
         //    hasFakeWall SAJA tidak cukup untuk flip ke AVOID
         //    Butuh score BENAR-BENAR anjlok + konfirmasi teknikal
@@ -262,26 +340,46 @@ object ScoringEngine {
         val isAra = snapshot.araPrice > 0 && currentPrice >= snapshot.araPrice
         val isTooExpensive = currentPrice >= 2000
 
+        // ============================================================
+        // FILTER LAYER 4: Konfirmasi 2 Snapshot Berturut-turut
+        //     Strong Buy hanya valid jika prevRec juga sudah tinggi
+        // ============================================================
+        val prevWasHighScore = prevRec == Recommendation.STRONG_BUY || prevRec == Recommendation.BUY
+
         var recommendation = when {
             // FILTER: Saham ARA atau harga >= 2000 langsung AVOID
             isAra || isTooExpensive -> Recommendation.AVOID
 
-            // STRONG BUY: Butuh score sangat tinggi + RR baik + tidak ada fake wall terkonfirmasi (ATAU HAKA Masif)
-            finalScore >= 82 && rrRatio >= 1.5 && !isTrulyBearish && snapshotCount >= 5 -> Recommendation.STRONG_BUY
-            // Jika ada HAKA masif dari Tape Reading, kita bisa overrule syarat snapshot! (Flash Signal Copet)
-            isHakaMasif && finalScore >= 75 && rrRatio >= 1.3 && !isTrulyBearish -> Recommendation.STRONG_BUY
-            // Hysteresis STRONG BUY: Sangat lengket, pertahankan sampai score benar-benar turun ke 65
-            prevRec == Recommendation.STRONG_BUY && finalScore >= 65 && !isTrulyBearish -> Recommendation.STRONG_BUY
+            // FILTER LAYER 2: Di bawah EMA 50 → maksimal WATCH (tidak bisa BUY/STRONG_BUY)
+            isBelowEma50 && !isConfirmedBreakout -> Recommendation.WATCH
 
-            // BUY
-            finalScore >= 68 && rrRatio >= 1.3 && !isTrulyBearish && snapshotCount >= 5 -> Recommendation.BUY
-            // Hysteresis BUY: Sangat lengket, bertahan sampai score jatuh di bawah 45
-            (prevRec == Recommendation.BUY || prevRec == Recommendation.STRONG_BUY) && finalScore >= 45 && !isTrulyBearish -> Recommendation.BUY
+            // ============================================================
+            // STRONG BUY: Threshold diperketat dari 82 → 88
+            // + Volume harus cukup
+            // + Tidak drop 3%+ dari high
+            // + Butuh konfirmasi snapshot sebelumnya (double confirm)
+            // ============================================================
+            filteredScore >= 88 && rrRatio >= 1.5 && !isTrulyBearish && snapshotCount >= 5
+                    && !lowVolumeBlock && !hardDropBlock && prevWasHighScore -> Recommendation.STRONG_BUY
+            // HAKA masif bisa override double confirm, tapi tetap perlu volume dan tidak drop besar
+            isHakaMasif && filteredScore >= 80 && rrRatio >= 1.3 && !isTrulyBearish
+                    && !hardDropBlock -> Recommendation.STRONG_BUY
+            // Hysteresis STRONG BUY: Diperketat dari 65 → 72
+            prevRec == Recommendation.STRONG_BUY && filteredScore >= 72 && !isTrulyBearish
+                    && !hardDropBlock -> Recommendation.STRONG_BUY
+
+            // ============================================================
+            // BUY: Threshold diperketat dari 68 → 75
+            // ============================================================
+            filteredScore >= 75 && rrRatio >= 1.3 && !isTrulyBearish && snapshotCount >= 5 -> Recommendation.BUY
+            // Hysteresis BUY: Diperketat dari 45 → 52
+            (prevRec == Recommendation.BUY || prevRec == Recommendation.STRONG_BUY)
+                    && filteredScore >= 52 && !isTrulyBearish -> Recommendation.BUY
 
             // WATCH
-            finalScore >= 52 -> Recommendation.WATCH
+            filteredScore >= 52 -> Recommendation.WATCH
             // Hysteresis WATCH: Bertahan sampai 35 sebelum ke AVOID
-            (prevRec != Recommendation.AVOID) && finalScore >= 35 -> Recommendation.WATCH
+            (prevRec != Recommendation.AVOID) && filteredScore >= 35 -> Recommendation.WATCH
 
             else -> Recommendation.AVOID
         }
@@ -316,6 +414,25 @@ object ScoringEngine {
         if (isTooExpensive) {
             warnings.add("⛔ Harga Saham > Rp 2.000. Filter aktif: Hanya merekomendasikan harga di bawah 2000.")
         }
+
+        // === Peringatan Filter 5-Layer ===
+        if (isBelowEma50 && technical.ema50 > 0) {
+            warnings.add("📉 Harga di bawah EMA 50 (${formatPrice(technical.ema50.toInt())}) — tren mayor BEARISH. Sinyal BUY dikunci, max WATCH.")
+        }
+        if (volumeRatio < 0.8 && technical.volumeRatio > 0) {
+            warnings.add("🔇 Volume sangat sepi (${String.format("%.0f", volumeRatio * 100)}% dari rata-rata 5 hari). Sinyal kurang valid!")
+        } else if (lowVolumeBlock) {
+            warnings.add("📉 Volume di bawah rata-rata (${String.format("%.0f", volumeRatio * 100)}% normal). Waspada sinyal palsu.")
+        }
+        if (hardDropBlock) {
+            warnings.add("🔻 Harga sudah drop ${String.format("%.1f", dropFromHigh * 100)}% dari high hari ini (${formatPrice(todayHigh.toInt())}). Strong Buy dikunci!")
+        } else if (dropFromHigh >= 0.02) {
+            warnings.add("⬇️ Harga turun ${String.format("%.1f", dropFromHigh * 100)}% dari high hari ini. Pertimbangkan tunggu stabilisasi.")
+        }
+        if (volumeRatio >= 1.5) {
+            reasons.add("📊 Volume tinggi (${String.format("%.0f", volumeRatio * 100)}% dari rata-rata) — konfirmasi kuat!")
+        }
+
 
         // Peringatan jika entry jauh dari bid (artinya harus hajar offer)
         if (entryPrice >= bestOffer) {
@@ -362,13 +479,19 @@ object ScoringEngine {
             warnings.add("⏱ Sesi pasar mendekati akhir. Tidak disarankan membuka posisi baru.")
         }
 
-        // Info target
+        // Info resistance / tembok offer
         if (thickWallLevel != null && targetPrice < thickWallLevel.price) {
-            reasons.add("🧱 Target dipasang di depan tembok tebal (Rp ${formatPrice(thickWallLevel.price)}). Lebih aman pastikan terjual sebelum tembus.")
+            reasons.add("🧱 Terdapat tembok offer tebal di Rp ${formatPrice(thickWallLevel.price)}. Waspada area ini.")
+        }
+
+        // Info bid wall support
+        if (thickBidWall != null) {
+            reasons.add("🛡️ Terdeteksi tembok bid tebal di Rp ${formatPrice(thickBidWall.price)} (${String.format("%,d", thickBidWall.lot).replace(',', '.')} lot) sebagai penahan harga/support kuat.")
         }
 
         val style = when {
             isConfirmedBreakout -> "Buy on Breakout (Tembus Offer Terverifikasi)"
+            thickBidWall != null -> entryNote.ifEmpty { "Buy on Bid Support (Tembok Tebal)" }
             orderFlow.hasAccumulation -> "Buy on Weakness (Bandar Akumulasi — Tunggu Pantulan)"
             orderFlow.hasAbsorption -> "Buy on Dip (Penjualan Terserap Kuat)"
             currentPrice <= technical.nearestSupport * 1.015 -> "Buy on Support (Pantulan Bawah)"

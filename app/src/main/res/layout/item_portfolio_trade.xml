@@ -79,6 +79,7 @@
 
         <!-- Row 3: Entry | Harga Kini | TP | SL -->
         <LinearLayout
+            android:id="@+id/layoutTargetSL"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal">
@@ -150,6 +151,16 @@
                     android:textColor="@color/signal_green"
                     android:textSize="13sp"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvPortfolioTargetPercent"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+2.5%"
+                    android:textColor="@color/signal_green"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="2dp" />
             </LinearLayout>
 
             <LinearLayout

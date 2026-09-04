@@ -21,15 +21,16 @@
             android:alpha="0" />
 
         <WebView
-            android:id="@+id/webViewStockbit"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-
-        <WebView
             android:id="@+id/webViewStream"
             android:layout_width="1280dp"
             android:layout_height="720dp"
             android:alpha="0" />
+
+        <!-- Main WebView dipindah ke paling bawah agar berada di atas Z-order dan bisa di-klik -->
+        <WebView
+            android:id="@+id/webViewStockbit"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
 
         <ProgressBar
             android:id="@+id/webViewProgressBar"

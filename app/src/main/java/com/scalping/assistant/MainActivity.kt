@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
     private var moversInjectorScript = ""
     private var streamInjectorScript = ""
     private var moversTickers = listOf<String>()
-    private val notifiedBuyTickers = mutableSetOf<String>()
+
 
     // ============================================================
     // Drag Handle State
@@ -114,6 +114,12 @@ class MainActivity : AppCompatActivity() {
             handler.postDelayed(this, 15000L)
         }
     }
+
+    private var backPressedTime: Long = 0
+
+    // Tracking untuk mencegah spam notifikasi TP/SL
+    private val notifiedTPTrades = mutableMapOf<String, Long>()
+    private val notifiedSLTrades = mutableMapOf<String, Long>()
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -176,20 +182,38 @@ class MainActivity : AppCompatActivity() {
                 val list = mutableListOf<com.scalping.assistant.data.repository.PortfolioTrade>()
                 for (i in 0 until array.length()) {
                     val obj = array.getJSONObject(i)
+                    val entryPrice = obj.getInt("entryPrice")
+                    val rawTarget = obj.optInt("targetPrice", 0)
+                    // Target scalping/day-trade minimal harus >= 2.5% di atas entry price (auto-heal jika data korup/kurang dari target normal)
+                    val minTarget = com.scalping.assistant.engine.PriceFraction.roundUpToValidTick(kotlin.math.ceil(entryPrice * 1.025).toInt())
+                    val targetPrice = if (rawTarget < minTarget) {
+                        com.scalping.assistant.engine.PriceFraction.roundUpToValidTick(kotlin.math.ceil(entryPrice * 1.028).toInt())
+                    } else {
+                        rawTarget
+                    }
+                    val defaultSL = com.scalping.assistant.engine.PriceFraction.roundDownToValidTick(kotlin.math.floor(entryPrice * 0.985).toInt())
+                    val rawSL = obj.optInt("stopLoss", defaultSL)
+                    val stopLoss = if (rawSL <= 0 || rawSL >= entryPrice) defaultSL else rawSL
+
                     list.add(
                         com.scalping.assistant.data.repository.PortfolioTrade(
                             id = obj.optString("id", java.util.UUID.randomUUID().toString()),
                             ticker = obj.getString("ticker"),
-                            entryPrice = obj.getInt("entryPrice"),
+                            entryPrice = entryPrice,
                             lot = obj.getInt("lot"),
                             buyTime = obj.optLong("buyTime", System.currentTimeMillis()),
-                            currentPrice = obj.optInt("currentPrice", obj.getInt("entryPrice")),
-                            targetPrice = obj.optInt("targetPrice", (obj.getInt("entryPrice") * 1.025).toInt()),
-                            stopLoss = obj.optInt("stopLoss", (obj.getInt("entryPrice") * 0.985).toInt())
+                            currentPrice = obj.optInt("currentPrice", entryPrice),
+                            targetPrice = targetPrice,
+                            stopLoss = stopLoss,
+                            isActive = obj.optBoolean("isActive", true),
+                            closePrice = obj.optInt("closePrice", 0),
+                            closeTime = obj.optLong("closeTime", 0L),
+                            status = obj.optString("status", "ACTIVE")
                         )
                     )
                 }
                 orderBookRepo.setPortfolioData(list)
+                savePortfolioToPrefs(list)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -208,6 +232,10 @@ class MainActivity : AppCompatActivity() {
             obj.put("currentPrice", trade.currentPrice)
             obj.put("targetPrice", trade.targetPrice)
             obj.put("stopLoss", trade.stopLoss)
+            obj.put("isActive", trade.isActive)
+            obj.put("closePrice", trade.closePrice)
+            obj.put("closeTime", trade.closeTime)
+            obj.put("status", trade.status)
             array.put(obj)
         }
         val prefs = getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
@@ -281,8 +309,8 @@ class MainActivity : AppCompatActivity() {
     // PORTFOLIO MANAGEMENT (dipanggil dari DetailBottomSheet)
     // ============================================================
 
-    fun addPortfolioTrade(ticker: String, entryPrice: Int, lot: Int) {
-        orderBookRepo.addPortfolioTrade(ticker, entryPrice, lot)
+    fun addPortfolioTrade(ticker: String, entryPrice: Int, lot: Int, targetPrice: Int, stopLoss: Int) {
+        orderBookRepo.addPortfolioTrade(ticker, entryPrice, lot, targetPrice, stopLoss)
         Toast.makeText(this, "✅ Posisi $ticker (${lot}L @ Rp ${String.format("%,d", entryPrice).replace(',', '.')}) dicatat!", Toast.LENGTH_SHORT).show()
     }
 
@@ -298,8 +326,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun clearActiveTrade() {
-        orderBookRepo.currentActiveTrade = null
-        Toast.makeText(this, "Trade selesai.", Toast.LENGTH_SHORT).show()
+        orderBookRepo.closeAllPortfolioTrades()
+        Toast.makeText(this, "Semua trade aktif ditutup.", Toast.LENGTH_SHORT).show()
+    }
+
+    fun closeTradeByTicker(ticker: String) {
+        val trades = orderBookRepo.getPortfolioList().filter { it.ticker == ticker && it.isActive }
+        for (trade in trades) {
+            orderBookRepo.closePortfolioTrade(trade.id, trade.currentPrice, "MANUAL")
+        }
+        Toast.makeText(this, "Trade $ticker ditutup manual.", Toast.LENGTH_SHORT).show()
     }
 
     // ============================================================
@@ -527,13 +563,11 @@ class MainActivity : AppCompatActivity() {
             orderBookRepo.closePortfolioTrade(trade.id)
             val pnl = String.format("%+.2f", trade.pnlPercent).replace(',', '.')
             Toast.makeText(this, "💰 Take Profit ${trade.ticker}: $pnl%! Posisi ditutup.", Toast.LENGTH_LONG).show()
-            vibrateDevice()
         }
         pagerAdapter.portfolioFragment.onCutLoss = { trade ->
             orderBookRepo.closePortfolioTrade(trade.id)
             val pnl = String.format("%+.2f", trade.pnlPercent).replace(',', '.')
             Toast.makeText(this, "🛑 Cut Loss ${trade.ticker}: $pnl%. Posisi ditutup.", Toast.LENGTH_LONG).show()
-            vibrateDeviceHeavy()
         }
 
         com.google.android.material.tabs.TabLayoutMediator(tabLayout, viewPager) { tab, position ->
@@ -557,7 +591,6 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     pagerAdapter.updateManualData(list)
                     updateTotalCount()
-                    checkAndNotifyBuySignals(list)
                 }
             }
         }
@@ -567,7 +600,6 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     pagerAdapter.updateMoversData(list)
                     updateTotalCount()
-                    checkAndNotifyBuySignals(list)
                 }
             }
         }
@@ -588,21 +620,33 @@ class MainActivity : AppCompatActivity() {
                     val activeCount = trades.count { it.isActive }
                     tabLayout.getTabAt(3)?.text = if (activeCount > 0) "💼 Portfolio ($activeCount)" else "💼 Portfolio"
 
-                    // TP Alert otomatis
+                    // TP Alert otomatis (Max 1x per 5 menit)
+                    val now = System.currentTimeMillis()
+                    val cooldownMs = 5 * 60 * 1000L // 5 menit
+
                     for (trade in trades) {
                         if (trade.isActive && trade.currentPrice >= trade.targetPrice) {
-                            val pnl = String.format("%.2f", trade.pnlPercent)
-                            vibrateDevice()
-                            Toast.makeText(this@MainActivity,
-                                "🎯 TARGET PROFIT ${trade.ticker} TERCAPAI! +${pnl}% — Pertimbangkan jual!",
-                                Toast.LENGTH_LONG).show()
+                            val lastTP = notifiedTPTrades[trade.id] ?: 0L
+                            if (now - lastTP > cooldownMs) {
+                                notifiedTPTrades[trade.id] = now
+                                val pnl = String.format("%.2f", trade.pnlPercent)
+                                Toast.makeText(this@MainActivity,
+                                    "🎯 TARGET PROFIT ${trade.ticker} TERCAPAI! +${pnl}% — Pertimbangkan jual!",
+                                    Toast.LENGTH_LONG).show()
+                            }
+                        } else if (trade.isActive && trade.currentPrice < trade.targetPrice) {
+                            // Reset jika harga turun lagi, tapi kita pakai cooldown
                         }
-                        // SL Alert otomatis
+
+                        // SL Alert otomatis (Max 1x per 5 menit)
                         if (trade.isActive && trade.currentPrice <= trade.stopLoss) {
-                            vibrateDeviceHeavy()
-                            Toast.makeText(this@MainActivity,
-                                "🚨 STOP LOSS ${trade.ticker} TERTEMBUS! Pertimbangkan CUT LOSS segera!",
-                                Toast.LENGTH_LONG).show()
+                            val lastSL = notifiedSLTrades[trade.id] ?: 0L
+                            if (now - lastSL > cooldownMs) {
+                                notifiedSLTrades[trade.id] = now
+                                Toast.makeText(this@MainActivity,
+                                    "🚨 STOP LOSS ${trade.ticker} TERTEMBUS! Pertimbangkan CUT LOSS segera!",
+                                    Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
                     savePortfolioToPrefs(trades)
@@ -650,7 +694,6 @@ class MainActivity : AppCompatActivity() {
     // ============================================================
 
     private fun showBailoutAlert(ticker: String, reason: String) {
-        vibrateDeviceHeavy()
         val builder = android.app.AlertDialog.Builder(this)
         builder.setTitle("🚨 PERINGATAN GUYURAN — $ticker")
         builder.setMessage(
@@ -667,30 +710,7 @@ class MainActivity : AppCompatActivity() {
         builder.show()
     }
 
-    private fun checkAndNotifyBuySignals(list: List<StockAnalysis>) {
-        // Hanya notify jika sinyal sudah terkonfirmasi (snapshotCount >= 5)
-        val strongBuys = list.filter {
-            it.recommendation == Recommendation.STRONG_BUY && it.snapshotCount >= 5
-        }
-        for (sb in strongBuys) {
-            if (!notifiedBuyTickers.contains(sb.ticker)) {
-                notifiedBuyTickers.add(sb.ticker)
-                vibrateDevice()
-                Toast.makeText(
-                    this,
-                    "🔥 Sinyal Kuat: ${sb.ticker} — ${sb.style} (Skor ${sb.score})",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
 
-        // Reset notifikasi jika saham sudah keluar dari STRONG_BUY
-        val currentStrongBuyTickers = strongBuys.map { it.ticker }.toSet()
-        notifiedBuyTickers.retainAll { ticker ->
-            currentStrongBuyTickers.contains(ticker) ||
-            list.any { it.ticker == ticker && it.recommendation == Recommendation.BUY }
-        }
-    }
 
     private fun updateTotalCount() {
         val manualCount = orderBookRepo.manualFlow.value.size
@@ -715,40 +735,6 @@ class MainActivity : AppCompatActivity() {
             tvLiveStatus.text = "● TUTUP"
             tvLiveStatus.setTextColor(Color.parseColor("#64748B"))
         }
-    }
-
-    // ============================================================
-    // VIBRATION
-    // ============================================================
-
-    private fun vibrateDevice() {
-        try {
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            if (vibrator != null && vibrator.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(300)
-                }
-            }
-        } catch (e: Exception) { }
-    }
-
-    private fun vibrateDeviceHeavy() {
-        try {
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            if (vibrator != null && vibrator.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val timings = longArrayOf(0, 500, 200, 500, 200, 1000)
-                    val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
-                    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(longArrayOf(0, 500, 200, 500, 200, 1000), -1)
-                }
-            }
-        } catch (e: Exception) { }
     }
 
     override fun onDestroy() {

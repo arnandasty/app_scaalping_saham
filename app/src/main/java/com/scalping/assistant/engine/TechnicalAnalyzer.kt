@@ -12,7 +12,7 @@ object TechnicalAnalyzer {
     fun analyze(ticker: String, candles: List<Candle>, currentPrice: Double): TechnicalResult {
         if (candles.size < 26) {
             // Not enough candles, return basic result
-            return TechnicalResult(ticker = ticker)
+            return TechnicalResult(ticker = ticker, lastClosePrice = currentPrice)
         }
 
         val closes = candles.map { it.close }
@@ -23,6 +23,16 @@ object TechnicalAnalyzer {
         
         val vwapValue = calculateVWAP(candles)
         val mfiValue = calculateMFI(candles, 14)
+
+        // === Filter Layer: Volume Ratio (volume hari ini vs rata-rata 5 hari) ===
+        val todayVolume = candles.lastOrNull()?.volume?.toDouble() ?: 0.0
+        val avg5DayVolume = if (candles.size >= 6) {
+            candles.takeLast(6).dropLast(1).map { it.volume.toDouble() }.average()
+        } else todayVolume
+        val volumeRatio = if (avg5DayVolume > 0.0) todayVolume / avg5DayVolume else 1.0
+
+        // === Filter Layer: Today High ===
+        val todayHighVal = highs.lastOrNull() ?: priceToUse
 
         // 1. EMA 9 & EMA 21
         val ema9Values = calculateEMA(closes, 9)
@@ -71,16 +81,52 @@ object TechnicalAnalyzer {
         val (stValue, isSupertrendBullish) = calculateSupertrend(highs, lows, closes, 10, 3.0)
         val supertrendScore = if (isSupertrendBullish) 6 else 0
 
+        // === Filter Layer: EMA 50 (Tren Makro) ===
+        val ema50Value = if (closes.size >= 50) calculateEMA(closes, 50).last() else 0.0
+        val isBelowEma50 = ema50Value > 0.0 && priceToUse < ema50Value
+
         // 5. Fibonacci Retracement
         val recentHigh = highs.takeLast(50).maxOrNull() ?: priceToUse
         val recentLow = lows.takeLast(50).minOrNull() ?: priceToUse
         val fibLevels = calculateFibonacci(recentHigh, recentLow)
 
-        val rawResistance = fibLevels.values.filter { it > priceToUse }.minOrNull() ?: (priceToUse * 1.03)
-        val rawSupport = fibLevels.values.filter { it < priceToUse }.maxOrNull() ?: (priceToUse * 0.97)
+        // 6. Dynamic Support & Resistance (Stable Levels Only)
+        // Kumpulkan semua potensi level support (di bawah harga saat ini)
+        val supportCandidates = mutableListOf<Double>()
+        supportCandidates.addAll(fibLevels.values.filter { it < priceToUse })
+        // Supertrend cukup stabil sebagai support jika sedang uptrend
+        if (stValue < priceToUse && isSupertrendBullish) supportCandidates.add(stValue)
+
+        // Kumpulkan semua potensi level resistance (di atas harga saat ini)
+        val resistanceCandidates = mutableListOf<Double>()
+        resistanceCandidates.addAll(fibLevels.values.filter { it > priceToUse })
+        // Supertrend cukup stabil sebagai resistance jika sedang downtrend
+        if (stValue > priceToUse && !isSupertrendBullish) resistanceCandidates.add(stValue)
+
+        // 7. Support & Resistance 2 (Volatile/Dynamic Levels)
+        val support2Candidates = mutableListOf<Double>()
+        if (vwapValue < priceToUse) support2Candidates.add(vwapValue)
+        if (lastEma9 < priceToUse) support2Candidates.add(lastEma9)
+        if (lastEma21 < priceToUse) support2Candidates.add(lastEma21)
+        if (bbLower < priceToUse) support2Candidates.add(bbLower)
+
+        val resistance2Candidates = mutableListOf<Double>()
+        if (vwapValue > priceToUse) resistance2Candidates.add(vwapValue)
+        if (lastEma9 > priceToUse) resistance2Candidates.add(lastEma9)
+        if (lastEma21 > priceToUse) resistance2Candidates.add(lastEma21)
+        if (bbUpper > priceToUse) resistance2Candidates.add(bbUpper)
+
+        // Ambil support terdekat yang valid, fallback ke 97% dari harga jika tidak ada
+        val rawSupport = supportCandidates.maxOrNull() ?: (priceToUse * 0.97)
+        val rawSupport2 = support2Candidates.maxOrNull() ?: rawSupport
+        // Ambil resistance terdekat yang valid, fallback ke 103% dari harga jika tidak ada
+        val rawResistance = resistanceCandidates.minOrNull() ?: (priceToUse * 1.03)
+        val rawResistance2 = resistance2Candidates.minOrNull() ?: rawResistance
 
         val nearestResistance = PriceFraction.roundUpToValidTick(rawResistance.toInt()).toDouble()
         val nearestSupport = PriceFraction.roundDownToValidTick(rawSupport.toInt()).toDouble()
+        val nearestResistance2 = PriceFraction.roundUpToValidTick(rawResistance2.toInt()).toDouble()
+        val nearestSupport2 = PriceFraction.roundDownToValidTick(rawSupport2.toInt()).toDouble()
 
         var fibScore = 0
         val fib618 = fibLevels["61.8%"] ?: 0.0
@@ -101,6 +147,7 @@ object TechnicalAnalyzer {
 
         return TechnicalResult(
             ticker = ticker,
+            lastClosePrice = closes.lastOrNull() ?: currentPrice,
             vwap = vwapValue,
             mfi = mfiValue,
             ema9 = lastEma9,
@@ -121,6 +168,13 @@ object TechnicalAnalyzer {
             fibScore = fibScore,
             nearestResistance = nearestResistance,
             nearestSupport = nearestSupport,
+            nearestResistance2 = nearestResistance2,
+            nearestSupport2 = nearestSupport2,
+            // === 5-Layer Filter Data ===
+            ema50 = ema50Value,
+            isBelowEma50 = isBelowEma50,
+            volumeRatio = volumeRatio,
+            todayHigh = todayHighVal,
             totalScore = totalScore.coerceIn(0, 30)
         )
     }
@@ -206,25 +260,56 @@ object TechnicalAnalyzer {
     }
 
     private fun calculateSupertrend(highs: List<Double>, lows: List<Double>, closes: List<Double>, period: Int, mult: Double): Pair<Double, Boolean> {
-        if (closes.size < period + 1) return Pair(closes.lastOrNull() ?: 0.0, true)
+        if (closes.size <= period) return Pair(closes.lastOrNull() ?: 0.0, true)
 
         val trList = mutableListOf<Double>()
         for (i in 1 until closes.size) {
             val tr = max(highs[i] - lows[i], max(abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1])))
             trList.add(tr)
         }
-        val atr = trList.takeLast(period).average()
 
-        val lastHigh = highs.last()
-        val lastLow = lows.last()
-        val lastClose = closes.last()
-        val hl2 = (lastHigh + lastLow) / 2.0
+        val atrList = mutableListOf<Double>()
+        var currentATR = trList.take(period).average()
+        atrList.add(currentATR)
+        for (i in period until trList.size) {
+            currentATR = (currentATR * (period - 1) + trList[i]) / period // RMA / SMMA
+            atrList.add(currentATR)
+        }
 
-        val upperBand = hl2 + mult * atr
-        val lowerBand = hl2 - mult * atr
+        var finalUpperBand = 0.0
+        var finalLowerBand = 0.0
+        var isBullish = true
 
-        val isBullish = lastClose > lowerBand
-        val stValue = if (isBullish) lowerBand else upperBand
+        val startIndex = period
+        
+        for (i in startIndex until closes.size) {
+            val hl2 = (highs[i] + lows[i]) / 2.0
+            val atr = atrList[i - startIndex]
+            val basicUpperBand = hl2 + mult * atr
+            val basicLowerBand = hl2 - mult * atr
+            
+            val prevClose = closes[i - 1]
+            
+            if (finalUpperBand == 0.0) {
+                finalUpperBand = basicUpperBand
+                finalLowerBand = basicLowerBand
+                isBullish = closes[i] > finalUpperBand
+            }
+
+            val newFinalUpperBand = if (basicUpperBand < finalUpperBand || prevClose > finalUpperBand) basicUpperBand else finalUpperBand
+            val newFinalLowerBand = if (basicLowerBand > finalLowerBand || prevClose < finalLowerBand) basicLowerBand else finalLowerBand
+
+            if (isBullish && closes[i] <= newFinalLowerBand) {
+                isBullish = false
+            } else if (!isBullish && closes[i] >= newFinalUpperBand) {
+                isBullish = true
+            }
+
+            finalUpperBand = newFinalUpperBand
+            finalLowerBand = newFinalLowerBand
+        }
+
+        val stValue = if (isBullish) finalLowerBand else finalUpperBand
         return Pair(stValue, isBullish)
     }
 

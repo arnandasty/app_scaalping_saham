@@ -5,6 +5,40 @@
     android:orientation="vertical"
     android:background="@color/bg_panel">
 
+    <RadioGroup
+        android:id="@+id/rgPortfolioMode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="8dp"
+        android:background="@color/bg_panel"
+        android:gravity="center">
+
+        <RadioButton
+            android:id="@+id/rbActive"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Posisi Aktif"
+            android:checked="true"
+            android:buttonTint="@color/text_primary"
+            android:textColor="@color/text_primary" />
+
+        <RadioButton
+            android:id="@+id/rbHistory"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Track Record"
+            android:buttonTint="@color/text_primary"
+            android:textColor="@color/text_primary" />
+    </RadioGroup>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/divider_color" />
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvPortfolio"
         android:layout_width="match_parent"

@@ -104,7 +104,14 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
             detailFibonacci.text = "Data candle teknikal sedang disinkronkan..."
         }
 
-        detailSupportResistance.text = "S1 (Support): Rp ${formatPrice(item.technical.nearestSupport.toInt())} | R1 (Resistance): Rp ${formatPrice(item.technical.nearestResistance.toInt())}"
+        val tech = item.technical
+        detailSupportResistance.text = """
+            S1 (Support Fibo): Rp ${formatPrice(tech.nearestSupport.toInt())} | R1 (Resistance): Rp ${formatPrice(tech.nearestResistance.toInt())}
+            S2 (Support Dinamis): Rp ${formatPrice(tech.nearestSupport2.toInt())} | R2 (Resis Dinamis): Rp ${formatPrice(tech.nearestResistance2.toInt())}
+            VWAP (Rata-rata Bandar): Rp ${formatPrice(tech.vwap.toInt())}
+            EMA 9: Rp ${formatPrice(tech.ema9.toInt())} | EMA 21: Rp ${formatPrice(tech.ema21.toInt())}
+            BB Bawah: Rp ${formatPrice(tech.bbLower.toInt())} | BB Atas: Rp ${formatPrice(tech.bbUpper.toInt())}
+        """.trimIndent()
 
         val btnDoneBuy = view.findViewById<android.widget.Button>(R.id.btnDoneBuy)
         val btnDoneSell = view.findViewById<android.widget.Button>(R.id.btnDoneSell)
@@ -115,15 +122,19 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
             val priceText = etEntryPrice.text.toString()
             val entryPrice = priceText.toIntOrNull() ?: item.entryPrice
 
+            // Jika user mengubah harga beli manual, kita sesuaikan TP/SL-nya secara proporsional atau default persentase
+            val targetPrice = if (entryPrice == item.entryPrice) item.targetPrice else com.scalping.assistant.engine.PriceFraction.roundUpToValidTick(kotlin.math.ceil(entryPrice * 1.028).toInt())
+            val stopLoss = if (entryPrice == item.entryPrice) item.stopLoss else com.scalping.assistant.engine.PriceFraction.roundDownToValidTick(kotlin.math.floor(entryPrice * 0.985).toInt())
+
             (activity as? com.scalping.assistant.MainActivity)?.let { mainActivity ->
-                mainActivity.addPortfolioTrade(item.ticker, entryPrice, lot)
+                mainActivity.addPortfolioTrade(item.ticker, entryPrice, lot, targetPrice, stopLoss)
                 mainActivity.navigateToPortfolioTab()
             }
             dismiss()
         }
 
         btnDoneSell.setOnClickListener {
-            (activity as? com.scalping.assistant.MainActivity)?.clearActiveTrade()
+            (activity as? com.scalping.assistant.MainActivity)?.closeTradeByTicker(item.ticker)
             dismiss()
         }
     }
