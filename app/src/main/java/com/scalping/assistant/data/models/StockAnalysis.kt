@@ -17,6 +17,7 @@ data class OrderFlowResult(
     val totalScore: Int = 0,       // 0 - 50
     val hasFakeWall: Boolean = false,
     val hasAbsorption: Boolean = false,
+    val hasAccumulation: Boolean = false, // Ritel jual tapi harga bertahan = akumulasi bandar
     val hasBreakoutSignal: Boolean = false,
     val hasBearTrap: Boolean = false,
     val cumulativeDelta: Long = 0L,
@@ -39,5 +40,6 @@ data class StockAnalysis(
     val warnings: List<String>,
     val technical: TechnicalResult,
     val orderFlow: OrderFlowResult,
+    val snapshotCount: Int = 0,     // Jumlah snapshot yang sudah terkumpul (confidence level)
     val lastUpdated: Long = System.currentTimeMillis()
 )

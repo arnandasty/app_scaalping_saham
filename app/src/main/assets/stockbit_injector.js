@@ -3,34 +3,70 @@ window.autoFillTickers = function(tickers) {
     var inputs = document.querySelectorAll('input');
     var tickerInputs = [];
     
-    // Kumpulkan semua input yang berisi/bisa berisi ticker
+    // Kumpulkan input yang berada di dalam widget orderbook
     for (var i = 0; i < inputs.length; i++) {
-        var v = (inputs[i].value || '').trim().toUpperCase();
-        // Input ticker: kosong ATAU sudah berisi 3-5 huruf kapital
-        if (v === '' || /^[A-Z]{3,5}$/.test(v)) {
+        var curr = inputs[i].parentElement;
+        var isWidget = false;
+        // Cek ke atas apakah ini widget orderbook
+        for (var d = 0; d < 10 && curr; d++) {
+            var txt = (curr.textContent || '').toLowerCase();
+            if (txt.indexOf('bid') >= 0 && txt.indexOf('offer') >= 0 && txt.indexOf('lot') >= 0) {
+                isWidget = true; break;
+            }
+            curr = curr.parentElement;
+        }
+        if (isWidget) {
             tickerInputs.push(inputs[i]);
         }
     }
     
-    // Ganti semua input dengan ticker dari Movers (per-posisi)
-    for (var t = 0; t < Math.min(tickerInputs.length, tickers.length); t++) {
-        var input = tickerInputs[t];
-        var currentVal = (input.value || '').trim().toUpperCase();
-        if (currentVal === tickers[t].toUpperCase()) continue; // Sudah sama, skip
-        
-        // Bypass React input setter protection
-        var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-        if (nativeInputValueSetter) {
-            nativeInputValueSetter.call(input, tickers[t]);
-        } else {
-            input.value = tickers[t];
-        }
-        
-        // Trigger events agar React mengenali perubahan
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        // JANGAN dispatch Enter - menyebabkan navigasi ke /symbol/TICKER
+    var tickerInputs = document.querySelectorAll('input');
+    if (tickerInputs.length === 0 || tickers.length === 0) return;
+    
+    // Gunakan input pertama (karena biasanya default orderbook hanya ada 1 atau 2 di layar)
+    var input = tickerInputs[0];
+    
+    // Rotasi: Ambil 1 ticker berikutnya secara berurutan setiap kali scraping dipanggil
+    if (window._autoFillIndex >= tickers.length) {
+        window._autoFillIndex = 0;
     }
+    var targetTicker = tickers[window._autoFillIndex];
+    window._autoFillIndex++;
+    
+    var currentVal = (input.value || '').trim().toUpperCase();
+    if (currentVal === targetTicker.toUpperCase()) return; // Sudah sesuai
+    
+    // Hapus nilai lama
+    input.value = '';
+    
+    // Ganti nilai input dengan ticker target (simulasi ketik karakter per karakter untuk mancing event React)
+    var lastVal = '';
+    for (var i = 0; i < targetTicker.length; i++) {
+        lastVal += targetTicker[i];
+        input.value = lastVal;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    
+    // Wajib dispatch Enter agar widget orderbook MEMUAT data emiten yang baru
+    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, keyCode: 13, key: 'Enter' }));
+    input.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, cancelable: true, keyCode: 13, key: 'Enter' }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, keyCode: 13, key: 'Enter' }));
+    
+    // Trigger klik otomatis menggunakan closure agar tidak tertukar antar widget
+    (function(tickerToSearch, currentInput) {
+        setTimeout(function() {
+            // Cari dropdown items di dekat input tersebut atau secara global
+            var dropItems = document.querySelectorAll('li, [class*="search-item"], [class*="symbol-item"]');
+            for (var k = 0; k < dropItems.length; k++) {
+                var txt = dropItems[k].textContent || '';
+                if (txt.toUpperCase().indexOf(tickerToSearch) === 0) {
+                    dropItems[k].click();
+                    break;
+                }
+            }
+        }, 300);
+    })(targetTicker.toUpperCase(), input);
 };
 
 (function() {
@@ -282,6 +318,50 @@ window.autoFillTickers = function(tickers) {
                 if (lastPrice === 0 && offerLevels.length > 0) lastPrice = offerLevels[0].price;
                 if (lastPrice === 0 && bidLevels.length > 0) lastPrice = bidLevels[0].price;
 
+                // ---- Cari ARA / ARB dari token widget ----
+                // Stockbit menampilkan "ARA 1,135" dan "ARB 775" di header widget
+                var araPrice = 0, arbPrice = 0;
+                for (var ai = 0; ai < tokens.length - 1; ai++) {
+                    var tok = tokens[ai].toUpperCase();
+                    if (tok === 'ARA' || tok === 'AR+') {
+                        var nextNum = parseNum(tokens[ai + 1]);
+                        if (nextNum > 0) { araPrice = nextNum; }
+                    }
+                    if (tok === 'ARB' || tok === 'AR-') {
+                        var nextNum2 = parseNum(tokens[ai + 1]);
+                        if (nextNum2 > 0) { arbPrice = nextNum2; }
+                    }
+                }
+
+                // ---- Cari changePercent ----
+                var wText = widget.textContent || '';
+                var pctMatch = wText.match(/\(([+-]?\d+[\.,]\d+)%\)/);
+                if (pctMatch) {
+                    changePercent = parseFloat(pctMatch[1].replace(',', '.'));
+                }
+
+                // Cari angka harga aktual (last price) dari token sebelum header orderbook
+                var scanFrom = headerIdx !== -1 ? headerIdx + 1 : 0;
+                
+                for (var p = 0; p < (headerIdx !== -1 ? headerIdx : Math.min(tokens.length, 20)); p++) {
+                    var tVal = tokens[p];
+                    var val = parseNum(tVal);
+                    // Ambil angka valid pertama yang murni harga (bukan persentase)
+                    if (val >= 50 && val <= 99000 && !tVal.includes('%')) {
+                        lastPrice = val;
+                        break;
+                    }
+                }
+
+                // Fallback terakhir
+                if (lastPrice === 0) {
+                    var lpMatch = wText.match(/(\d[\d,.]*)\s*[↑↓⬆⬇+\-]/);
+                    if (lpMatch) {
+                        var candidate = parseNum(lpMatch[1]);
+                        if (candidate >= 50 && candidate <= 99000) lastPrice = candidate;
+                    }
+                }
+
                 if (lastPrice > 0 && (bidLevels.length > 0 || offerLevels.length > 0)) {
                     processedTickers[ticker] = true;
                     var totalBid = 0, totalOffer = 0;
@@ -296,7 +376,9 @@ window.autoFillTickers = function(tickers) {
                         bidLevels: bidLevels,
                         offerLevels: offerLevels,
                         totalBidLot: totalBid,
-                        totalOfferLot: totalOffer
+                        totalOfferLot: totalOffer,
+                        araPrice: araPrice,
+                        arbPrice: arbPrice
                     });
                 } else {
                     debugLog.push(wDebug + ": " + ticker + " no price levels.");

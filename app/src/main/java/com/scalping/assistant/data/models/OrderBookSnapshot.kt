@@ -14,5 +14,7 @@ data class OrderBookSnapshot(
     val bidLevels: List<PriceLevel>,
     val offerLevels: List<PriceLevel>,
     val totalBidLot: Long,
-    val totalOfferLot: Long
+    val totalOfferLot: Long,
+    val araPrice: Int = 0,   // Harga ARA (Auto Reject Atas) — 0 jika tidak diketahui
+    val arbPrice: Int = 0    // Harga ARB (Auto Reject Bawah) — 0 jika tidak diketahui
 )

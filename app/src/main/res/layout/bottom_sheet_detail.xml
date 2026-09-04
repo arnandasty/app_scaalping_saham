@@ -19,7 +19,7 @@
             android:layout_marginBottom="12dp"
             android:background="@color/divider_color" />
 
-        <!-- Header: Ticker & Score -->
+        <!-- Header: Ticker & Score & Confidence -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -53,14 +53,29 @@
                 android:layout_height="1dp"
                 android:layout_weight="1" />
 
-            <TextView
-                android:id="@+id/detailScore"
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Skor: 92/100"
-                android:textColor="@color/signal_green"
-                android:textSize="18sp"
-                android:textStyle="bold" />
+                android:orientation="vertical"
+                android:gravity="end">
+
+                <TextView
+                    android:id="@+id/detailScore"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Skor: 92/100"
+                    android:textColor="@color/signal_green"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/detailConfidence"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Konfirmasi: 0 data"
+                    android:textColor="@color/text_muted"
+                    android:textSize="10sp" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- Trading Plan Card -->
@@ -252,10 +267,60 @@
             android:text="S1: 9.300 | R1: 9.700"
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
+        <!-- Input Lot + Tombol DONE BUY -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="💼 Catat Posisi Beli"
+            android:textColor="@color/brand_accent"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Jumlah Lot:"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <EditText
+                android:id="@+id/etLotAmount"
+                android:layout_width="80dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_chip"
+                android:gravity="center"
+                android:hint="1"
+                android:inputType="numberDecimal"
+                android:minWidth="60dp"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:text="1"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="Lot"
+                android:textColor="@color/text_muted"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
             android:orientation="horizontal"
             android:gravity="center"
             android:weightSum="2">
@@ -276,13 +341,12 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="8dp"
                 android:backgroundTint="@color/signal_green"
                 android:textColor="@android:color/black"
                 android:textStyle="bold"
-                android:text="DONE BUY" />
+                android:text="✅ DONE BUY — Catat ke Portfolio" />
         </LinearLayout>
-        
+
         <TextView
             android:id="@+id/tvTradeStatus"
             android:layout_width="match_parent"

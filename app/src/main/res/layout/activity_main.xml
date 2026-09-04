@@ -8,6 +8,7 @@
 
     <!-- 1. Bagian Atas: Stockbit WebView (55% Layar) -->
     <FrameLayout
+        android:id="@+id/webViewContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="55">
@@ -34,14 +35,36 @@
             android:visibility="gone" />
     </FrameLayout>
 
-    <!-- Divider Bar -->
-    <View
+    <!-- Drag Handle Divider — swipe ke atas untuk perbesar panel AI -->
+    <LinearLayout
+        android:id="@+id/dividerDragHandle"
         android:layout_width="match_parent"
-        android:layout_height="2dp"
-        android:background="@color/divider_color" />
+        android:layout_height="22dp"
+        android:background="#1A2235"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:clickable="true"
+        android:focusable="true">
+
+        <!-- Garis drag handle (3 garis pendek) -->
+        <View
+            android:layout_width="36dp"
+            android:layout_height="3dp"
+            android:layout_marginBottom="2dp"
+            android:background="#4A5568"
+            android:backgroundTint="#4A5568" />
+
+        <View
+            android:layout_width="24dp"
+            android:layout_height="3dp"
+            android:background="#4A5568"
+            android:backgroundTint="#4A5568" />
+
+    </LinearLayout>
 
     <!-- 2. Bagian Bawah: AI Assistant Panel (45% Layar) -->
     <LinearLayout
+        android:id="@+id/aiPanelContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="45"

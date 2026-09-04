@@ -39,22 +39,49 @@
                 var changePct = 0;
 
                 // Cari data harga dari elemen saudara di baris yang sama
-                // Struktur: <td> berisi img + span ticker, kolom berikutnya berisi harga
-                var row = img.closest('tr') || img.closest('[class*="row"]') || img.parentElement;
+                // Struktur tabel Stockbit Movers biasanya: <td> berisi img + ticker, lalu kolom harga, change, dll.
+                var row = img.closest('tr');
                 if (row) {
-                    var rowText = row.innerText || '';
-                    // Cari semua angka dalam baris
-                    var nums = rowText.match(/[\d,.]+/g) || [];
-                    for (var n = 0; n < nums.length; n++) {
-                        var val = parseFloat(nums[n].replace(/,/g, ''));
-                        if (val >= 50 && val <= 99000 && price === 0) {
-                            price = Math.round(val);
+                    var tds = row.querySelectorAll('td');
+                    if (tds.length >= 3) {
+                        // Iterasi dari td indeks 1 (mengabaikan kolom ticker di td 0)
+                        for (var c = 1; c < tds.length; c++) {
+                            var cellText = tds[c].innerText || '';
+                            // Hanya ambil angka yang murni harga (tidak ada persen, tidak ada B/M/K, tidak ada +)
+                            var cellNum = parseFloat(cellText.replace(/,/g, ''));
+                            if (!isNaN(cellNum) && cellNum >= 50 && cellNum <= 99000 && 
+                                !cellText.includes('%') && !cellText.includes('+') && 
+                                !/[BMK]/.test(cellText.toUpperCase()) && price === 0) {
+                                price = Math.round(cellNum);
+                            }
+                            
+                            // Cari persentase di kolom mana pun
+                            var pctMatch = cellText.match(/([+-]?\d+[.,]\d+)%/);
+                            if (pctMatch && changePct === 0) {
+                                changePct = parseFloat(pctMatch[1].replace(',', '.'));
+                            }
                         }
                     }
-                    // Cari persentase (format: +16,00% atau -3,50%)
-                    var pctMatch = rowText.match(/([+-]?\d+[.,]\d+)%/);
-                    if (pctMatch) {
-                        changePct = parseFloat(pctMatch[1].replace(',', '.'));
+                }
+                
+                // Fallback jika bukan <tr> (div layout)
+                if (price === 0) {
+                    row = img.closest('[class*="row"]') || img.parentElement;
+                    if (row) {
+                        var rowText = row.innerText || '';
+                        // Cari angka tepat sebelum persentase, atau iterasi dengan aman
+                        var tokens = rowText.split(/\s+/);
+                        for (var i = 0; i < tokens.length; i++) {
+                            var t = tokens[i];
+                            var val = parseFloat(t.replace(/,/g, ''));
+                            if (!isNaN(val) && val >= 50 && val <= 99000 && !t.includes('%') && !t.includes('+') && !/[BMK]/.test(t.toUpperCase()) && price === 0) {
+                                price = Math.round(val);
+                            }
+                        }
+                        var fallbackPctMatch = rowText.match(/([+-]?\d+[.,]\d+)%/);
+                        if (fallbackPctMatch && changePct === 0) {
+                            changePct = parseFloat(fallbackPctMatch[1].replace(',', '.'));
+                        }
                     }
                 }
 

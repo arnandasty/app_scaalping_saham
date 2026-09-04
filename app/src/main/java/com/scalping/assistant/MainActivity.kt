@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.view.MotionEvent
 import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -37,7 +38,7 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var webViewMovers: WebView // Desktop mode orderbook untuk scrape sidebar Movers
+    private lateinit var webViewMovers: WebView
     private lateinit var progressBar: ProgressBar
     private lateinit var tabLayout: com.google.android.material.tabs.TabLayout
     private lateinit var viewPager: androidx.viewpager2.widget.ViewPager2
@@ -47,6 +48,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStockCount: TextView
     private lateinit var tvStatusLog: TextView
 
+    // Drag handle views
+    private lateinit var webViewContainer: android.widget.FrameLayout
+    private lateinit var dividerDragHandle: LinearLayout
+    private lateinit var aiPanelContainer: LinearLayout
+
     private lateinit var pagerAdapter: com.scalping.assistant.ui.RankingPagerAdapter
     private lateinit var yahooRepo: YahooFinanceRepository
     private lateinit var orderBookRepo: OrderBookRepository
@@ -54,28 +60,36 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var injectorScript = ""
     private var moversInjectorScript = ""
-    private var moversTickers = listOf<String>() // Daftar ticker dari sidebar Movers
+    private var moversTickers = listOf<String>()
     private val notifiedBuyTickers = mutableSetOf<String>()
+
+    // ============================================================
+    // Drag Handle State
+    // ============================================================
+    private var dragStartY = 0f
+    private var dragStartWebviewWeight = 55f
+    private var dragStartAiWeight = 45f
+    private val TOTAL_WEIGHT = 100f
+    // 3 preset layout mode
+    private var layoutMode = 0 // 0=55/45, 1=35/65 (AI besar), 2=70/30 (WebView besar)
+
+    // ============================================================
+    // Scraping Runnables
+    // ============================================================
 
     private val scrapingRunnable = object : Runnable {
         override fun run() {
-            // === WebView Utama: Scrape orderbook manual ===
             if (::webView.isInitialized && injectorScript.isNotEmpty()) {
                 webView.evaluateJavascript(injectorScript, null)
             }
 
-            // === WebView Movers: 2-Fase ===
             if (::webViewMovers.isInitialized) {
-                // Fase 1: Scrape sidebar untuk ambil daftar ticker Movers
                 if (moversInjectorScript.isNotEmpty()) {
                     webViewMovers.evaluateJavascript(moversInjectorScript, null)
                 }
-
-                // Fase 2: Isi widget orderbook dengan ticker Movers, lalu scrape bid/offer
                 if (moversTickers.isNotEmpty() && injectorScript.isNotEmpty()) {
                     val tickersJson = org.json.JSONArray(moversTickers).toString()
                     val autoFillAndScrape = "if(typeof window.autoFillTickers === 'function') { window.autoFillTickers($tickersJson); } $injectorScript"
-                    // Delay 500ms agar React sempat re-render setelah autoFill
                     handler.postDelayed({
                         webViewMovers.evaluateJavascript(autoFillAndScrape, null)
                     }, 500L)
@@ -89,7 +103,7 @@ class MainActivity : AppCompatActivity() {
     private val sessionTimerRunnable = object : Runnable {
         override fun run() {
             updateSessionUI()
-            handler.postDelayed(this, 15000L) // Cek sesi pasar setiap 15 detik
+            handler.postDelayed(this, 15000L)
         }
     }
 
@@ -102,16 +116,14 @@ class MainActivity : AppCompatActivity() {
         initServices()
         setupWebView()
         setupViewPager()
+        setupDragHandle()
         observeData()
 
-        // Load Stockbit
         webView.loadUrl("https://stockbit.com/orderbook")
-        // WebView Movers: Load halaman orderbook yang sama tapi versi Desktop untuk scrape sidebar Movers
         webViewMovers.loadUrl("https://stockbit.com/orderbook")
 
-        // Mulai polling timer
         handler.post(sessionTimerRunnable)
-        handler.postDelayed(scrapingRunnable, 5000L) // Mulai scrape setelah 5 detik pertama
+        handler.postDelayed(scrapingRunnable, 5000L)
     }
 
     private fun initViews() {
@@ -125,6 +137,9 @@ class MainActivity : AppCompatActivity() {
         tvLiveStatus = findViewById(R.id.tvLiveStatus)
         tvStockCount = findViewById(R.id.tvStockCount)
         tvStatusLog = findViewById(R.id.tvStatusLog)
+        webViewContainer = findViewById(R.id.webViewContainer)
+        dividerDragHandle = findViewById(R.id.dividerDragHandle)
+        aiPanelContainer = findViewById(R.id.aiPanelContainer)
     }
 
     private fun initServices() {
@@ -138,6 +153,98 @@ class MainActivity : AppCompatActivity() {
             tvStatusLog.text = "Gagal memuat injector: ${e.message}"
         }
     }
+
+    // ============================================================
+    // DRAG HANDLE SETUP
+    // ============================================================
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupDragHandle() {
+        dividerDragHandle.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragStartY = event.rawY
+                    dragStartWebviewWeight = (webViewContainer.layoutParams as LinearLayout.LayoutParams).weight
+                    dragStartAiWeight = (aiPanelContainer.layoutParams as LinearLayout.LayoutParams).weight
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaY = event.rawY - dragStartY
+                    val screenHeight = resources.displayMetrics.heightPixels.toFloat()
+                    val deltaWeight = (deltaY / screenHeight) * TOTAL_WEIGHT
+
+                    val newWebWeight = (dragStartWebviewWeight + deltaWeight).coerceIn(20f, 75f)
+                    val newAiWeight = TOTAL_WEIGHT - newWebWeight
+
+                    applyLayoutWeights(newWebWeight, newAiWeight)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    // Snap ke preset terdekat saat dilepas
+                    val currentWebWeight = (webViewContainer.layoutParams as LinearLayout.LayoutParams).weight
+                    snapToNearestPreset(currentWebWeight)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // Tap pada drag handle → cycle through 3 preset mode
+        dividerDragHandle.setOnClickListener {
+            layoutMode = (layoutMode + 1) % 3
+            when (layoutMode) {
+                0 -> { applyLayoutWeights(55f, 45f); Toast.makeText(this, "Mode: Stockbit Lebih Besar", Toast.LENGTH_SHORT).show() }
+                1 -> { applyLayoutWeights(35f, 65f); Toast.makeText(this, "Mode: AI Panel Lebih Besar", Toast.LENGTH_SHORT).show() }
+                2 -> { applyLayoutWeights(70f, 30f); Toast.makeText(this, "Mode: Stockbit Maksimal", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    private fun applyLayoutWeights(webWeight: Float, aiWeight: Float) {
+        val webParams = webViewContainer.layoutParams as LinearLayout.LayoutParams
+        webParams.weight = webWeight
+        webViewContainer.layoutParams = webParams
+
+        val aiParams = aiPanelContainer.layoutParams as LinearLayout.LayoutParams
+        aiParams.weight = aiWeight
+        aiPanelContainer.layoutParams = aiParams
+    }
+
+    private fun snapToNearestPreset(currentWeight: Float) {
+        val presets = listOf(35f, 55f, 70f)
+        val nearest = presets.minByOrNull { Math.abs(it - currentWeight) } ?: 55f
+        layoutMode = presets.indexOf(nearest)
+        applyLayoutWeights(nearest, TOTAL_WEIGHT - nearest)
+    }
+
+    // ============================================================
+    // PORTFOLIO MANAGEMENT (dipanggil dari DetailBottomSheet)
+    // ============================================================
+
+    fun addPortfolioTrade(ticker: String, entryPrice: Int, lot: Int) {
+        orderBookRepo.addPortfolioTrade(ticker, entryPrice, lot)
+        Toast.makeText(this, "✅ Posisi $ticker (${lot}L @ Rp ${String.format("%,d", entryPrice).replace(',', '.')}) dicatat!", Toast.LENGTH_SHORT).show()
+    }
+
+    fun navigateToPortfolioTab() {
+        // Tab Portfolio ada di index 3
+        viewPager.setCurrentItem(3, true)
+    }
+
+    // Backward compat
+    fun setActiveTrade(ticker: String, entryPrice: Double) {
+        orderBookRepo.currentActiveTrade = com.scalping.assistant.data.repository.ActiveTrade(ticker, entryPrice)
+        Toast.makeText(this, "Trade $ticker dicatat pada Rp ${entryPrice.toInt()}", Toast.LENGTH_SHORT).show()
+    }
+
+    fun clearActiveTrade() {
+        orderBookRepo.currentActiveTrade = null
+        Toast.makeText(this, "Trade selesai.", Toast.LENGTH_SHORT).show()
+    }
+
+    // ============================================================
+    // WEBVIEW SETUP
+    // ============================================================
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
@@ -159,19 +266,18 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             userAgentString = customUserAgent
         }
-        
+
         webViewMovers.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            userAgentString = desktopUserAgent // Desktop mode agar sidebar Movers muncul
+            userAgentString = desktopUserAgent
         }
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewMovers, true)
 
         val bridge = StockbitBridge(
             onDataReceived = { json ->
                 lifecycleScope.launch {
-                    // Data dari WebView utama SELALU masuk ke tab Manual
                     orderBookRepo.processJsonData(json)
                 }
             },
@@ -181,38 +287,32 @@ class MainActivity : AppCompatActivity() {
                 }
             },
             onStatus = { status ->
-                runOnUiThread {
-                    tvStatusLog.text = status
-                }
+                runOnUiThread { tvStatusLog.text = status }
             },
             onError = { err ->
-                runOnUiThread {
-                    tvStatusLog.text = "Status: $err"
-                }
+                runOnUiThread { tvStatusLog.text = "Status: $err" }
             }
         )
 
         webView.addJavascriptInterface(bridge, "Android")
-        
+
         val moversBridge = object {
-            // === Dari movers_injector.js: daftar ticker sidebar ===
             @android.webkit.JavascriptInterface
             fun onMoversData(jsonArray: String) {
                 try {
                     val arr = org.json.JSONArray(jsonArray)
                     val tickers = mutableListOf<String>()
-                    for (i in 0 until arr.length()) {
+                    for (i in 0 until Math.min(arr.length(), 6)) { // Ambil 6 teratas agar rotasi cukup cepat (18 detik/cycle)
                         val obj = arr.getJSONObject(i)
                         tickers.add(obj.getString("ticker"))
                     }
                     if (tickers.isNotEmpty()) {
                         moversTickers = tickers
-                        // Langsung proses dengan analisis teknikal agar tab Movers langsung terisi
                         lifecycleScope.launch {
                             orderBookRepo.processMoversTickerData(jsonArray)
                         }
                     }
-                } catch (e: Exception) { /* ignore */ }
+                } catch (e: Exception) { }
             }
 
             @android.webkit.JavascriptInterface
@@ -220,7 +320,6 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { tvStatusLog.text = "Movers: $msg" }
             }
 
-            // === Dari stockbit_injector.js: data orderbook LENGKAP (bonus jika berhasil) ===
             @android.webkit.JavascriptInterface
             fun onOrderBookData(jsonString: String) {
                 lifecycleScope.launch {
@@ -244,22 +343,16 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: ""
-                if (url.startsWith("http://") || url.startsWith("https://")) {
-                    return false
-                }
-                return false
+                return !(url.startsWith("http://") || url.startsWith("https://"))
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
                 progressBar.visibility = View.GONE
                 android.webkit.CookieManager.getInstance().flush()
-                // Trigger injeksi pertama
                 if (injectorScript.isNotEmpty()) {
                     view.evaluateJavascript(injectorScript, null)
                 }
-                
-                // Pastikan Movers WebView juga pindah dari halaman login jika sudah login
                 if (url.contains("stockbit.com") && !url.contains("/login")) {
                     if (::webViewMovers.isInitialized && webViewMovers.url?.contains("/login") == true) {
                         webViewMovers.loadUrl("https://stockbit.com/orderbook")
@@ -337,28 +430,48 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    finish()
-                }
+                if (webView.canGoBack()) webView.goBack()
+                else finish()
             }
         })
     }
 
+    // ============================================================
+    // VIEW PAGER SETUP (Sekarang 4 Tab)
+    // ============================================================
+
     private fun setupViewPager() {
         pagerAdapter = com.scalping.assistant.ui.RankingPagerAdapter(this)
         viewPager.adapter = pagerAdapter
+
+        // Setup callback TP/CL dari portfolio
+        pagerAdapter.portfolioFragment.onTakeProfit = { trade ->
+            orderBookRepo.closePortfolioTrade(trade.id)
+            val pnl = String.format("%+.2f", trade.pnlPercent).replace(',', '.')
+            Toast.makeText(this, "💰 Take Profit ${trade.ticker}: $pnl%! Posisi ditutup.", Toast.LENGTH_LONG).show()
+            vibrateDevice()
+        }
+        pagerAdapter.portfolioFragment.onCutLoss = { trade ->
+            orderBookRepo.closePortfolioTrade(trade.id)
+            val pnl = String.format("%+.2f", trade.pnlPercent).replace(',', '.')
+            Toast.makeText(this, "🛑 Cut Loss ${trade.ticker}: $pnl%. Posisi ditutup.", Toast.LENGTH_LONG).show()
+            vibrateDeviceHeavy()
+        }
 
         com.google.android.material.tabs.TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
                 0 -> "Manual"
                 1 -> "Movers"
                 2 -> "Top Picks"
+                3 -> "💼 Portfolio"
                 else -> ""
             }
         }.attach()
     }
+
+    // ============================================================
+    // DATA OBSERVATION
+    // ============================================================
 
     private fun observeData() {
         lifecycleScope.launch {
@@ -390,17 +503,44 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            orderBookRepo.statusFlow.collectLatest { status ->
+            orderBookRepo.portfolioFlow.collectLatest { trades ->
                 runOnUiThread {
-                    tvStatusLog.text = status
+                    pagerAdapter.updatePortfolioData(trades)
+                    // Update badge jumlah posisi aktif di tab Portfolio
+                    val activeCount = trades.count { it.isActive }
+                    tabLayout.getTabAt(3)?.text = if (activeCount > 0) "💼 Portfolio ($activeCount)" else "💼 Portfolio"
+
+                    // TP Alert otomatis
+                    for (trade in trades) {
+                        if (trade.isActive && trade.currentPrice >= trade.targetPrice) {
+                            val pnl = String.format("%.2f", trade.pnlPercent)
+                            vibrateDevice()
+                            Toast.makeText(this@MainActivity,
+                                "🎯 TARGET PROFIT ${trade.ticker} TERCAPAI! +${pnl}% — Pertimbangkan jual!",
+                                Toast.LENGTH_LONG).show()
+                        }
+                        // SL Alert otomatis
+                        if (trade.isActive && trade.currentPrice <= trade.stopLoss) {
+                            vibrateDeviceHeavy()
+                            Toast.makeText(this@MainActivity,
+                                "🚨 STOP LOSS ${trade.ticker} TERTEMBUS! Pertimbangkan CUT LOSS segera!",
+                                Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
             }
         }
 
         lifecycleScope.launch {
-            orderBookRepo.bailoutFlow.collectLatest { ticker ->
+            orderBookRepo.statusFlow.collectLatest { status ->
+                runOnUiThread { tvStatusLog.text = status }
+            }
+        }
+
+        lifecycleScope.launch {
+            orderBookRepo.bailoutFlow.collectLatest { (ticker, reason) ->
                 runOnUiThread {
-                    showBailoutAlert(ticker)
+                    showBailoutAlert(ticker, reason)
                 }
             }
         }
@@ -419,45 +559,57 @@ class MainActivity : AppCompatActivity() {
                         val recommendation = analysis.recommendation.label
                         tvStatus.text = "${trade.ticker}: $pnlStr ($recommendation)"
                         banner.visibility = View.VISIBLE
-                        
-                        if (pnl > 0) {
-                            banner.setBackgroundColor(Color.parseColor("#10B981")) // Hijau
-                        } else {
-                            banner.setBackgroundColor(Color.parseColor("#EF4444")) // Merah
-                        }
+                        banner.setBackgroundColor(if (pnl > 0) Color.parseColor("#10B981") else Color.parseColor("#EF4444"))
                     }
                 }
             }
         }
     }
 
-    fun setActiveTrade(ticker: String, entryPrice: Double) {
-        orderBookRepo.currentActiveTrade = com.scalping.assistant.data.repository.ActiveTrade(ticker, entryPrice)
-        Toast.makeText(this, "Trade $ticker dicatat pada Rp ${entryPrice.toInt()}", Toast.LENGTH_SHORT).show()
-    }
+    // ============================================================
+    // ALERTS & NOTIFICATIONS
+    // ============================================================
 
-    fun clearActiveTrade() {
-        orderBookRepo.currentActiveTrade = null
-        Toast.makeText(this, "Trade selesai.", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun showBailoutAlert(ticker: String) {
+    private fun showBailoutAlert(ticker: String, reason: String) {
         vibrateDeviceHeavy()
         val builder = android.app.AlertDialog.Builder(this)
-        builder.setTitle("🚨 GUYURAN BANDAR!")
-        builder.setMessage("Saham $ticker sedang diguyur masif (Delta Volume negatif parah). Jika Anda punya barang, pertimbangkan untuk BAILOUT / CUTLOSS sekarang juga!")
-        builder.setPositiveButton("Mengerti") { dialog, _ -> dialog.dismiss() }
+        builder.setTitle("🚨 PERINGATAN GUYURAN — $ticker")
+        builder.setMessage(
+            "Terdeteksi tekanan jual masif pada $ticker dan harga sedang melemah.\n\n" +
+            "Alasan: $reason\n\n" +
+            "Perhatian: Pastikan ini BUKAN akumulasi bandar sebelum memutuskan. " +
+            "Cek apakah harga masih di atas support dan bid wall masih ada."
+        )
+        builder.setPositiveButton("Pantau Lebih") { dialog, _ -> dialog.dismiss() }
+        builder.setNegativeButton("Lihat Portfolio") { dialog, _ ->
+            dialog.dismiss()
+            navigateToPortfolioTab()
+        }
         builder.show()
     }
 
     private fun checkAndNotifyBuySignals(list: List<StockAnalysis>) {
-        val strongBuys = list.filter { it.recommendation == Recommendation.STRONG_BUY }
+        // Hanya notify jika sinyal sudah terkonfirmasi (snapshotCount >= 5)
+        val strongBuys = list.filter {
+            it.recommendation == Recommendation.STRONG_BUY && it.snapshotCount >= 5
+        }
         for (sb in strongBuys) {
             if (!notifiedBuyTickers.contains(sb.ticker)) {
                 notifiedBuyTickers.add(sb.ticker)
                 vibrateDevice()
-                Toast.makeText(this, "🔥 Sinyal Beli Terdeteksi: ${sb.ticker} (Skor ${sb.score})", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this,
+                    "🔥 Sinyal Kuat: ${sb.ticker} — ${sb.style} (Skor ${sb.score})",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
+        }
+
+        // Reset notifikasi jika saham sudah keluar dari STRONG_BUY
+        val currentStrongBuyTickers = strongBuys.map { it.ticker }.toSet()
+        notifiedBuyTickers.retainAll { ticker ->
+            currentStrongBuyTickers.contains(ticker) ||
+            list.any { it.ticker == ticker && it.recommendation == Recommendation.BUY }
         }
     }
 
@@ -466,6 +618,29 @@ class MainActivity : AppCompatActivity() {
         val moversCount = orderBookRepo.moversFlow.value.size
         tvStockCount.text = "${manualCount + moversCount} Saham"
     }
+
+    // ============================================================
+    // SESSION UI
+    // ============================================================
+
+    private fun updateSessionUI() {
+        val info = MarketSession.getCurrentSession()
+        tvSessionBadge.text = info.phase.label
+        tvSessionBadge.setTextColor(Color.parseColor(info.phase.colorHex))
+        tvSessionTime.text = info.timeDisplay
+
+        if (info.phase.isTradeable) {
+            tvLiveStatus.text = "● LIVE"
+            tvLiveStatus.setTextColor(Color.parseColor("#10B981"))
+        } else {
+            tvLiveStatus.text = "● TUTUP"
+            tvLiveStatus.setTextColor(Color.parseColor("#64748B"))
+        }
+    }
+
+    // ============================================================
+    // VIBRATION
+    // ============================================================
 
     private fun vibrateDevice() {
         try {
@@ -478,9 +653,7 @@ class MainActivity : AppCompatActivity() {
                     vibrator.vibrate(300)
                 }
             }
-        } catch (e: Exception) {
-            // Ignore vibration error if not permitted
-        }
+        } catch (e: Exception) { }
     }
 
     private fun vibrateDeviceHeavy() {
@@ -496,23 +669,7 @@ class MainActivity : AppCompatActivity() {
                     vibrator.vibrate(longArrayOf(0, 500, 200, 500, 200, 1000), -1)
                 }
             }
-        } catch (e: Exception) {
-        }
-    }
-
-    private fun updateSessionUI() {
-        val info = MarketSession.getCurrentSession()
-        tvSessionBadge.text = info.phase.label
-        tvSessionBadge.setTextColor(Color.parseColor(info.phase.colorHex))
-        tvSessionTime.text = info.timeDisplay
-
-        if (info.phase.isTradeable) {
-            tvLiveStatus.text = "● LIVE"
-            tvLiveStatus.setTextColor(Color.parseColor("#10B981"))
-        } else {
-            tvLiveStatus.text = "● TUTUP"
-            tvLiveStatus.setTextColor(Color.parseColor("#64748B"))
-        }
+        } catch (e: Exception) { }
     }
 
     override fun onDestroy() {

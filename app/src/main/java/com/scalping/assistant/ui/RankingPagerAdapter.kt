@@ -4,13 +4,20 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import com.scalping.assistant.data.models.StockAnalysis
+import com.scalping.assistant.data.repository.PortfolioTrade
 
 class RankingPagerAdapter(activity: FragmentActivity) : FragmentStateAdapter(activity) {
 
+    private val manualFragment = RankingFragment()
+    private val moversFragment = RankingFragment()
+    private val topPicksFragment = RankingFragment()
+    val portfolioFragment = PortfolioFragment()
+
     private val fragments = listOf(
-        RankingFragment(), // Tab 1: Manual
-        RankingFragment(), // Tab 2: Movers
-        RankingFragment()  // Tab 3: Top Picks
+        manualFragment,     // Tab 0: Manual
+        moversFragment,     // Tab 1: Movers
+        topPicksFragment,   // Tab 2: Top Picks
+        portfolioFragment   // Tab 3: Portfolio 💼
     )
 
     override fun getItemCount(): Int = fragments.size
@@ -18,14 +25,18 @@ class RankingPagerAdapter(activity: FragmentActivity) : FragmentStateAdapter(act
     override fun createFragment(position: Int): Fragment = fragments[position]
 
     fun updateManualData(data: List<StockAnalysis>) {
-        fragments[0].updateData(data)
+        manualFragment.updateData(data)
     }
 
     fun updateMoversData(data: List<StockAnalysis>) {
-        fragments[1].updateData(data)
+        moversFragment.updateData(data)
     }
 
     fun updateTopPicksData(data: List<StockAnalysis>) {
-        fragments[2].updateData(data)
+        topPicksFragment.updateData(data)
+    }
+
+    fun updatePortfolioData(trades: List<PortfolioTrade>) {
+        portfolioFragment.updateData(trades)
     }
 }
