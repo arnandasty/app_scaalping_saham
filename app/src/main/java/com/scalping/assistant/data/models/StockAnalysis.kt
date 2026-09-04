@@ -24,6 +24,15 @@ data class OrderFlowResult(
     val details: List<String> = emptyList()
 )
 
+data class TapeReadingStat(
+    val ticker: String,
+    var totalHakaLot: Long = 0L,
+    var totalHakiLot: Long = 0L,
+    var hakaFrequency: Int = 0,
+    var hakiFrequency: Int = 0,
+    var lastUpdated: Long = System.currentTimeMillis()
+)
+
 data class StockAnalysis(
     val ticker: String,
     val score: Int, // 0 - 100
@@ -40,6 +49,7 @@ data class StockAnalysis(
     val warnings: List<String>,
     val technical: TechnicalResult,
     val orderFlow: OrderFlowResult,
+    val tapeReading: TapeReadingStat? = null,
     val snapshotCount: Int = 0,     // Jumlah snapshot yang sudah terkumpul (confidence level)
     val lastUpdated: Long = System.currentTimeMillis()
 )

@@ -52,6 +52,7 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
     private val historyMap = mutableMapOf<String, MutableList<OrderBookSnapshot>>()
     private val technicalCache = mutableMapOf<String, TechnicalResult>()
     private val previousRecommendations = mutableMapOf<String, Recommendation>()
+    private val tapeReadingMap = mutableMapOf<String, com.scalping.assistant.data.models.TapeReadingStat>()
 
     // ============================================================
     // State Flows untuk UI
@@ -293,6 +294,37 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
     }
 
     // ============================================================
+    // DATA PROCESSING: WebView Stream (Running Trade)
+    // ============================================================
+
+    suspend fun processStreamData(jsonString: String) {
+        try {
+            val arr = JSONArray(jsonString)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val ticker = obj.getString("ticker").uppercase()
+                val type = obj.getString("type")
+                val lot = obj.getLong("lot")
+
+                val stat = tapeReadingMap.getOrPut(ticker) {
+                    com.scalping.assistant.data.models.TapeReadingStat(ticker)
+                }
+                
+                if (type == "BUY") {
+                    stat.totalHakaLot += lot
+                    stat.hakaFrequency += 1
+                } else if (type == "SELL") {
+                    stat.totalHakiLot += lot
+                    stat.hakiFrequency += 1
+                }
+                stat.lastUpdated = System.currentTimeMillis()
+            }
+        } catch (e: Exception) {
+            // Abaikan parsing error stream
+        }
+    }
+
+    // ============================================================
     // DATA PROCESSING: WebView Movers (Tab Movers)
     // ============================================================
 
@@ -481,8 +513,9 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
 
             val prevRec = previousRecommendations[historyKey]
             val snapshotCount = history.size
+            val tapeReadingStat = tapeReadingMap[ticker]
 
-            val analysis = ScoringEngine.generateAnalysis(snap, ofResult, techResult, sessionInfo, prevRec, snapshotCount)
+            val analysis = ScoringEngine.generateAnalysis(snap, ofResult, techResult, sessionInfo, prevRec, snapshotCount, tapeReadingStat)
             previousRecommendations[historyKey] = analysis.recommendation
             analyses.add(analysis)
 

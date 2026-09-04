@@ -53,7 +53,18 @@ class RankingAdapter(
 
         fun bind(item: StockAnalysis, rank: Int) {
             tvRank.text = "#$rank"
-            tvTicker.text = item.ticker
+            
+            val sign = if (item.changePercent > 0) "+" else ""
+            tvTicker.text = "${item.ticker} ($sign${item.changePercent}%)"
+            
+            if (item.changePercent > 0) {
+                tvTicker.setTextColor(Color.parseColor("#10B981")) // Green
+            } else if (item.changePercent < 0) {
+                tvTicker.setTextColor(Color.parseColor("#EF4444")) // Red
+            } else {
+                tvTicker.setTextColor(Color.parseColor("#E2E8F0")) // Default/Primary
+            }
+
             tvScore.text = "Skor: ${item.score}/100"
 
             tvRecommendation.text = item.recommendation.label

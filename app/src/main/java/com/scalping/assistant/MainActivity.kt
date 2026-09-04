@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var webViewMovers: WebView
+    private lateinit var webViewStream: WebView
     private lateinit var progressBar: ProgressBar
     private lateinit var tabLayout: com.google.android.material.tabs.TabLayout
     private lateinit var viewPager: androidx.viewpager2.widget.ViewPager2
@@ -62,6 +63,7 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var injectorScript = ""
     private var moversInjectorScript = ""
+    private var streamInjectorScript = ""
     private var moversTickers = listOf<String>()
     private val notifiedBuyTickers = mutableSetOf<String>()
 
@@ -97,8 +99,12 @@ class MainActivity : AppCompatActivity() {
                     }, 500L)
                 }
             }
+            
+            if (::webViewStream.isInitialized && streamInjectorScript.isNotEmpty()) {
+                webViewStream.evaluateJavascript(streamInjectorScript, null)
+            }
 
-            handler.postDelayed(this, 3000L)
+            handler.postDelayed(this, 1000L) // Ubah delay scraping jadi 1 detik agar stream lebih update
         }
     }
 
@@ -123,6 +129,7 @@ class MainActivity : AppCompatActivity() {
 
         webView.loadUrl("https://stockbit.com/orderbook")
         webViewMovers.loadUrl("https://stockbit.com/orderbook")
+        webViewStream.loadUrl("https://stockbit.com/orderbook") // Nanti JS stream_injector akan klik tombol stream
 
         handler.post(sessionTimerRunnable)
         handler.postDelayed(scrapingRunnable, 5000L)
@@ -131,6 +138,7 @@ class MainActivity : AppCompatActivity() {
     private fun initViews() {
         webView = findViewById(R.id.webViewStockbit)
         webViewMovers = findViewById(R.id.webViewMovers)
+        webViewStream = findViewById(R.id.webViewStream)
         progressBar = findViewById(R.id.webViewProgressBar)
         tabLayout = findViewById(R.id.tabLayout)
         viewPager = findViewById(R.id.viewPager)
@@ -153,6 +161,7 @@ class MainActivity : AppCompatActivity() {
         try {
             injectorScript = assets.open("stockbit_injector.js").bufferedReader().use { it.readText() }
             moversInjectorScript = assets.open("movers_injector.js").bufferedReader().use { it.readText() }
+            streamInjectorScript = assets.open("stream_injector.js").bufferedReader().use { it.readText() }
         } catch (e: Exception) {
             tvStatusLog.text = "Gagal memuat injector: ${e.message}"
         }
@@ -326,6 +335,14 @@ class MainActivity : AppCompatActivity() {
         }
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewMovers, true)
 
+        webViewStream.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            cacheMode = WebSettings.LOAD_DEFAULT
+            userAgentString = desktopUserAgent
+        }
+        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webViewStream, true)
+
         val bridge = StockbitBridge(
             onDataReceived = { json ->
                 lifecycleScope.launch {
@@ -390,6 +407,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
         webViewMovers.addJavascriptInterface(moversBridge, "Android")
+
+        val streamBridge = object {
+            @android.webkit.JavascriptInterface
+            fun onStreamData(jsonArray: String) {
+                lifecycleScope.launch {
+                    orderBookRepo.processStreamData(jsonArray)
+                }
+            }
+        }
+        webViewStream.addJavascriptInterface(streamBridge, "AndroidStream")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {

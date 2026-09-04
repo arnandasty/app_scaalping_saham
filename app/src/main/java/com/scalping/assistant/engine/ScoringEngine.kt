@@ -16,7 +16,8 @@ object ScoringEngine {
         technical: TechnicalResult,
         sessionInfo: SessionInfo,
         prevRec: Recommendation? = null,
-        snapshotCount: Int = 0
+        snapshotCount: Int = 0,
+        tapeReading: com.scalping.assistant.data.models.TapeReadingStat? = null
     ): StockAnalysis {
         val ticker = snapshot.ticker
         val currentPrice = if (snapshot.lastPrice > 0) snapshot.lastPrice else (snapshot.offerLevels.firstOrNull()?.price ?: 100)
@@ -215,7 +216,31 @@ object ScoringEngine {
             overboughtPenalty /= 2
         }
 
-        // E. Confidence penalty jika snapshot masih sedikit
+        // E. Tape Reading Score (0 - 15)
+        var tapeReadingScore = 0
+        var isHakiMasif = false
+        var isHakaMasif = false
+        if (tapeReading != null) {
+            val haka = tapeReading.totalHakaLot
+            val haki = tapeReading.totalHakiLot
+            if (haka > 0 || haki > 0) {
+                if (haka > haki * 2) {
+                    tapeReadingScore = 15 // HAKA dominan
+                    isHakaMasif = true
+                } else if (haka > haki * 1.3) {
+                    tapeReadingScore = 8
+                } else if (haki > haka * 2) {
+                    tapeReadingScore = -20 // HAKI dominan masif
+                    isHakiMasif = true
+                } else if (haki > haka * 1.3) {
+                    tapeReadingScore = -10
+                } else {
+                    tapeReadingScore = 0
+                }
+            }
+        }
+
+        // F. Confidence penalty jika snapshot masih sedikit
         // Dengan snapshot <5, belum cukup data untuk sinyal kuat → turunkan skor
         val confidencePenalty = when {
             snapshotCount < 3  -> -20  // Data masih sangat sedikit
@@ -224,7 +249,7 @@ object ScoringEngine {
             else -> 0                   // Data sudah cukup
         }
 
-        val finalScore = (ofScore + effectiveTechScore + marketScore + rrPenalty + overboughtPenalty + confidencePenalty).coerceIn(0, 100)
+        val finalScore = (ofScore + effectiveTechScore + marketScore + tapeReadingScore + rrPenalty + overboughtPenalty + confidencePenalty).coerceIn(0, 100)
 
         // ============================================================
         // 6. REKOMENDASI — Hysteresis yang diperkuat
@@ -232,8 +257,8 @@ object ScoringEngine {
         //    Butuh score BENAR-BENAR anjlok + konfirmasi teknikal
         // ============================================================
 
-        // hasFakeWall hanya flip rekomendasi jika ada JUGA bukti teknikal bearish
-        val isTrulyBearish = orderFlow.hasFakeWall && !technical.isSupertrendBullish && effectiveTechScore < 10
+        // hasFakeWall hanya flip rekomendasi jika ada JUGA bukti teknikal bearish ATAU ada HAKI masif di Tape Reading
+        val isTrulyBearish = (orderFlow.hasFakeWall && (!technical.isSupertrendBullish || effectiveTechScore < 10)) || isHakiMasif
         val isAra = snapshot.araPrice > 0 && currentPrice >= snapshot.araPrice
         val isTooExpensive = currentPrice >= 2000
 
@@ -241,8 +266,10 @@ object ScoringEngine {
             // FILTER: Saham ARA atau harga >= 2000 langsung AVOID
             isAra || isTooExpensive -> Recommendation.AVOID
 
-            // STRONG BUY: Butuh score sangat tinggi + RR baik + tidak ada fake wall terkonfirmasi
+            // STRONG BUY: Butuh score sangat tinggi + RR baik + tidak ada fake wall terkonfirmasi (ATAU HAKA Masif)
             finalScore >= 82 && rrRatio >= 1.5 && !isTrulyBearish && snapshotCount >= 5 -> Recommendation.STRONG_BUY
+            // Jika ada HAKA masif dari Tape Reading, kita bisa overrule syarat snapshot! (Flash Signal Copet)
+            isHakaMasif && finalScore >= 75 && rrRatio >= 1.3 && !isTrulyBearish -> Recommendation.STRONG_BUY
             // Hysteresis STRONG BUY: Sangat lengket, pertahankan sampai score benar-benar turun ke 65
             prevRec == Recommendation.STRONG_BUY && finalScore >= 65 && !isTrulyBearish -> Recommendation.STRONG_BUY
 
@@ -348,6 +375,22 @@ object ScoringEngine {
             else -> entryNote.ifEmpty { "Momentum / Follow Trend" }
         }
 
+        if (tapeReading != null) {
+            val haka = tapeReading.totalHakaLot
+            val haki = tapeReading.totalHakiLot
+            if (haka > haki * 1.5) {
+                reasons.add("🏃‍♂️ Tape Reading: HAKA masif (${haka}L vs ${haki}L)!")
+            } else if (haki > haka * 1.5) {
+                warnings.add("🏃‍♂️ Tape Reading: HAKI masif (${haki}L vs ${haka}L)!")
+            } else if (haka > 0 || haki > 0) {
+                reasons.add("Tape Reading: HAKA ${haka}L | HAKI ${haki}L")
+            }
+        }
+
+        if (confidencePenalty < 0) {
+            warnings.add("Sedang mengumpulkan data awal (menunggu ${8 - snapshotCount} iterasi lagi). Sinyal belum valid.")
+        }
+
         return StockAnalysis(
             ticker = ticker,
             score = finalScore,
@@ -364,6 +407,7 @@ object ScoringEngine {
             warnings = warnings,
             technical = technical,
             orderFlow = orderFlow,
+            tapeReading = tapeReading,
             snapshotCount = snapshotCount,
             lastUpdated = System.currentTimeMillis()
         )

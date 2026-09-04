@@ -35,7 +35,16 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         val etEntryPrice: EditText = view.findViewById(R.id.etEntryPrice)
         val etLotAmount: EditText = view.findViewById(R.id.etLotAmount)
 
-        detailTicker.text = item.ticker
+        val sign = if (item.changePercent > 0) "+" else ""
+        detailTicker.text = "${item.ticker} ($sign${item.changePercent}%)"
+        
+        if (item.changePercent > 0) {
+            detailTicker.setTextColor(Color.parseColor("#10B981"))
+        } else if (item.changePercent < 0) {
+            detailTicker.setTextColor(Color.parseColor("#EF4444"))
+        } else {
+            detailTicker.setTextColor(Color.parseColor("#E2E8F0"))
+        }
         etEntryPrice.setText(item.entryPrice.toString())
         detailScore.text = "Skor: ${item.score}/100"
 
