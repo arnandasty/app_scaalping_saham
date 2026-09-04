@@ -1,13 +1,17 @@
 (function() {
     try {
         // === LANGKAH 1: Klik tombol untuk buka panel Movers ===
-        var moversBtn = document.querySelector('button[data-cy="right-menu-movers"]');
-        if (moversBtn) {
-            moversBtn.click();
+        // Hanya klik jika belum terbuka (cek keberadaan logo emiten di movers)
+        var isMoversOpen = document.querySelector('img[src*="/logos/companies/"]');
+        if (!isMoversOpen) {
+            var moversBtn = document.querySelector('button[data-cy="right-menu-movers"]');
+            if (moversBtn) {
+                moversBtn.click();
+            }
         }
 
         // === LANGKAH 2: Tunggu panel render lalu scrape ===
-        setTimeout(scrapeMovers, 600);
+        setTimeout(scrapeMovers, 800);
 
     } catch(e) {
         if (window.Android && window.Android.onMoversDebug) {

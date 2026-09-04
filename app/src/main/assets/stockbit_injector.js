@@ -20,10 +20,27 @@ window.autoFillTickers = function(tickers) {
         }
     }
     
-    var tickerInputs = document.querySelectorAll('input');
+    // Fallback: Jika tidak menemukan widget yang sudah terisi, cari input yang BUKAN berada di header/nav
+    if (tickerInputs.length === 0) {
+        for (var j = 0; j < inputs.length; j++) {
+            var isNav = false;
+            var p = inputs[j].parentElement;
+            while(p && p.tagName !== 'BODY') {
+                var cName = (p.className || '').toLowerCase();
+                if (p.tagName === 'HEADER' || p.tagName === 'NAV' || cName.indexOf('header') >= 0 || cName.indexOf('nav') >= 0 || p.id.indexOf('header') >= 0) {
+                    isNav = true; break;
+                }
+                p = p.parentElement;
+            }
+            if (!isNav) {
+                tickerInputs.push(inputs[j]);
+            }
+        }
+    }
+    
     if (tickerInputs.length === 0 || tickers.length === 0) return;
     
-    // Gunakan input pertama (karena biasanya default orderbook hanya ada 1 atau 2 di layar)
+    // Gunakan input yang ditemukan
     var input = tickerInputs[0];
     
     // Rotasi: Ambil 1 ticker berikutnya secara berurutan setiap kali scraping dipanggil
@@ -36,22 +53,26 @@ window.autoFillTickers = function(tickers) {
     var currentVal = (input.value || '').trim().toUpperCase();
     if (currentVal === targetTicker.toUpperCase()) return; // Sudah sesuai
     
-    // Hapus nilai lama
-    input.value = '';
-    
-    // Ganti nilai input dengan ticker target (simulasi ketik karakter per karakter untuk mancing event React)
-    var lastVal = '';
-    for (var i = 0; i < targetTicker.length; i++) {
-        lastVal += targetTicker[i];
-        input.value = lastVal;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
+    // Hapus nilai lama dengan React bypass
+    var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    if (nativeInputValueSetter) {
+        nativeInputValueSetter.call(input, '');
+    } else {
+        input.value = '';
     }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    
+    // Ganti nilai input dengan ticker target
+    if (nativeInputValueSetter) {
+        nativeInputValueSetter.call(input, targetTicker);
+    } else {
+        input.value = targetTicker;
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
     
-    // Wajib dispatch Enter agar widget orderbook MEMUAT data emiten yang baru
-    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, keyCode: 13, key: 'Enter' }));
-    input.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, cancelable: true, keyCode: 13, key: 'Enter' }));
-    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, keyCode: 13, key: 'Enter' }));
+    // PENTING: JANGAN dispatch Enter ('keydown' 13) karena di Stockbit Desktop akan trigger redirect ke halaman /symbol/TICKER!
+    // Membiarkan setTimeout(click) di bawah yang mengambil alih pemilihan dropdown.
     
     // Trigger klik otomatis menggunakan closure agar tidak tertukar antar widget
     (function(tickerToSearch, currentInput) {
