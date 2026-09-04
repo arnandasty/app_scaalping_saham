@@ -40,8 +40,6 @@ window.autoFillTickers = function(tickers) {
     
     if (tickerInputs.length === 0 || tickers.length === 0) {
         if (tickers.length > 0) {
-            // JIKA WIDGET ORDERBOOK SAMA SEKALI TIDAK ADA (misal workspace kosong atau sedang di halaman profil)
-            // Kita paksa navigasi ke halaman profil emiten melalui simulasi klik link (agar ditangkap React Router tanpa full reload)
             if (window._autoFillIndex >= tickers.length) window._autoFillIndex = 0;
             var fallbackTicker = tickers[window._autoFillIndex];
             window._autoFillIndex++;
@@ -49,7 +47,23 @@ window.autoFillTickers = function(tickers) {
             // Cek apakah sudah di halaman tersebut
             var urlMatch = window.location.pathname.match(/\/symbol\/([A-Z]{3,5})/i);
             if (urlMatch && urlMatch[1].toUpperCase() === fallbackTicker.toUpperCase()) return;
+
+            // CARA 1: Gunakan Global Search Bar di Header agar React Router menangani navigasinya
+            var globalSearch = document.querySelector('header input, nav input, [class*="header"] input');
+            if (globalSearch) {
+                var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                if (nativeInputValueSetter) {
+                    nativeInputValueSetter.call(globalSearch, fallbackTicker);
+                } else {
+                    globalSearch.value = fallbackTicker;
+                }
+                globalSearch.dispatchEvent(new Event('input', { bubbles: true }));
+                globalSearch.dispatchEvent(new Event('change', { bubbles: true }));
+                globalSearch.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, keyCode: 13, key: 'Enter' }));
+                return;
+            }
             
+            // CARA 2: Fallback ekstrim (risiko full reload)
             var a = document.createElement('a');
             a.href = '/symbol/' + fallbackTicker;
             document.body.appendChild(a);
