@@ -32,9 +32,11 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         val detailFibonacci: android.widget.TextView = view.findViewById(R.id.detailFibonacci)
         val detailSupportResistance: android.widget.TextView = view.findViewById(R.id.detailSupportResistance)
         val detailEntryStyle: android.widget.TextView = view.findViewById(R.id.detailEntryStyle)
+        val etEntryPrice: EditText = view.findViewById(R.id.etEntryPrice)
         val etLotAmount: EditText = view.findViewById(R.id.etLotAmount)
 
         detailTicker.text = item.ticker
+        etEntryPrice.setText(item.entryPrice.toString())
         detailScore.text = "Skor: ${item.score}/100"
 
         // Confidence level berdasarkan jumlah snapshot
@@ -100,9 +102,11 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         btnDoneBuy.setOnClickListener {
             val lotText = etLotAmount.text.toString()
             val lot = lotText.toIntOrNull()?.coerceAtLeast(1) ?: 1
+            val priceText = etEntryPrice.text.toString()
+            val entryPrice = priceText.toIntOrNull() ?: item.entryPrice
 
             (activity as? com.scalping.assistant.MainActivity)?.let { mainActivity ->
-                mainActivity.addPortfolioTrade(item.ticker, item.entryPrice, lot)
+                mainActivity.addPortfolioTrade(item.ticker, entryPrice, lot)
                 mainActivity.navigateToPortfolioTab()
             }
             dismiss()
