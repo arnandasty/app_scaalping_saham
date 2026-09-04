@@ -93,6 +93,20 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
 
     private val _portfolio = mutableListOf<PortfolioTrade>()
 
+    fun getPortfolioList(): List<PortfolioTrade> {
+        return _portfolio.toList()
+    }
+
+    fun setPortfolioData(data: List<PortfolioTrade>) {
+        _portfolio.clear()
+        _portfolio.addAll(data)
+        _portfolioFlow.value = _portfolio.toList()
+        if (_portfolio.isNotEmpty()) {
+            val first = _portfolio.first()
+            currentActiveTrade = ActiveTrade(first.ticker, first.entryPrice.toDouble())
+        }
+    }
+
     fun addPortfolioTrade(ticker: String, entryPrice: Int, lot: Int): PortfolioTrade {
         val trade = PortfolioTrade(
             ticker = ticker.uppercase(),

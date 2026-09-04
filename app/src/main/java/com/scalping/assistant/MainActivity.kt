@@ -34,6 +34,8 @@ import com.scalping.assistant.ui.DetailBottomSheet
 import com.scalping.assistant.ui.RankingAdapter
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
@@ -146,12 +148,61 @@ class MainActivity : AppCompatActivity() {
         yahooRepo = YahooFinanceRepository()
         orderBookRepo = OrderBookRepository(yahooRepo)
 
+        loadPortfolioFromPrefs()
+
         try {
             injectorScript = assets.open("stockbit_injector.js").bufferedReader().use { it.readText() }
             moversInjectorScript = assets.open("movers_injector.js").bufferedReader().use { it.readText() }
         } catch (e: Exception) {
             tvStatusLog.text = "Gagal memuat injector: ${e.message}"
         }
+    }
+
+    private fun loadPortfolioFromPrefs() {
+        val prefs = getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
+        val jsonStr = prefs.getString("portfolio_data", null)
+        if (jsonStr != null) {
+            try {
+                val array = JSONArray(jsonStr)
+                val list = mutableListOf<com.scalping.assistant.data.repository.PortfolioTrade>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(
+                        com.scalping.assistant.data.repository.PortfolioTrade(
+                            id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                            ticker = obj.getString("ticker"),
+                            entryPrice = obj.getInt("entryPrice"),
+                            lot = obj.getInt("lot"),
+                            buyTime = obj.optLong("buyTime", System.currentTimeMillis()),
+                            currentPrice = obj.optInt("currentPrice", obj.getInt("entryPrice")),
+                            targetPrice = obj.optInt("targetPrice", (obj.getInt("entryPrice") * 1.025).toInt()),
+                            stopLoss = obj.optInt("stopLoss", (obj.getInt("entryPrice") * 0.985).toInt())
+                        )
+                    )
+                }
+                orderBookRepo.setPortfolioData(list)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun savePortfolioToPrefs(trades: List<com.scalping.assistant.data.repository.PortfolioTrade>) {
+        val array = JSONArray()
+        for (trade in trades) {
+            val obj = JSONObject()
+            obj.put("id", trade.id)
+            obj.put("ticker", trade.ticker)
+            obj.put("entryPrice", trade.entryPrice)
+            obj.put("lot", trade.lot)
+            obj.put("buyTime", trade.buyTime)
+            obj.put("currentPrice", trade.currentPrice)
+            obj.put("targetPrice", trade.targetPrice)
+            obj.put("stopLoss", trade.stopLoss)
+            array.put(obj)
+        }
+        val prefs = getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("portfolio_data", array.toString()).apply()
     }
 
     // ============================================================
@@ -527,6 +578,7 @@ class MainActivity : AppCompatActivity() {
                                 Toast.LENGTH_LONG).show()
                         }
                     }
+                    savePortfolioToPrefs(trades)
                 }
             }
         }
