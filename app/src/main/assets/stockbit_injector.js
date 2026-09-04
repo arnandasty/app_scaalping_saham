@@ -38,7 +38,26 @@ window.autoFillTickers = function(tickers) {
         }
     }
     
-    if (tickerInputs.length === 0 || tickers.length === 0) return;
+    if (tickerInputs.length === 0 || tickers.length === 0) {
+        if (tickers.length > 0) {
+            // JIKA WIDGET ORDERBOOK SAMA SEKALI TIDAK ADA (misal workspace kosong atau sedang di halaman profil)
+            // Kita paksa navigasi ke halaman profil emiten melalui simulasi klik link (agar ditangkap React Router tanpa full reload)
+            if (window._autoFillIndex >= tickers.length) window._autoFillIndex = 0;
+            var fallbackTicker = tickers[window._autoFillIndex];
+            window._autoFillIndex++;
+            
+            // Cek apakah sudah di halaman tersebut
+            var urlMatch = window.location.pathname.match(/\/symbol\/([A-Z]{3,5})/i);
+            if (urlMatch && urlMatch[1].toUpperCase() === fallbackTicker.toUpperCase()) return;
+            
+            var a = document.createElement('a');
+            a.href = '/symbol/' + fallbackTicker;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+        return;
+    }
     
     // Gunakan input yang ditemukan
     var input = tickerInputs[0];
@@ -253,7 +272,40 @@ window.autoFillTickers = function(tickers) {
         }
 
         if (widgets.length === 0) {
-            debugLog.push("0 widget containers found from " + allInputs.length + " inputs.");
+            // FALLBACK UNTUK HALAMAN PROFIL (/symbol/TICKER)
+            // Di halaman profil, orderbook tidak memiliki input ticker, jadi kita harus cari dari struktur tabel
+            var urlMatch = window.location.pathname.match(/\/symbol\/([A-Z]{3,5})/i);
+            var pageTicker = urlMatch ? urlMatch[1].toUpperCase() : null;
+            
+            if (pageTicker) {
+                var tableHeaders = document.querySelectorAll('th, td, div');
+                var profileWidget = null;
+                for (var th = 0; th < tableHeaders.length; th++) {
+                    var txt = (tableHeaders[th].textContent || '').trim().toLowerCase();
+                    if (txt === 'bid' || txt === 'offer') {
+                        var curr = tableHeaders[th].parentElement;
+                        var depth = 0;
+                        while (curr && curr.tagName !== 'BODY' && depth < 10) {
+                            var pTxt = (curr.textContent || '').toLowerCase();
+                            if (pTxt.indexOf('bid') >= 0 && pTxt.indexOf('offer') >= 0 && pTxt.indexOf('lot') >= 0) {
+                                profileWidget = curr;
+                            }
+                            curr = curr.parentElement;
+                            depth++;
+                        }
+                    }
+                }
+                
+                if (profileWidget && widgets.indexOf(profileWidget) === -1) {
+                    // Simpan ticker dari URL ke dalam atribut elemen agar terbaca oleh parser di bawah
+                    profileWidget.setAttribute('data-injected-ticker', pageTicker);
+                    widgets.push(profileWidget);
+                }
+            }
+            
+            if (widgets.length === 0) {
+                debugLog.push("0 widget containers found from " + allInputs.length + " inputs and fallback.");
+            }
         }
 
         for (var w = 0; w < widgets.length; w++) {
@@ -269,12 +321,14 @@ window.autoFillTickers = function(tickers) {
                 }
 
                 // ---- Cari Ticker ----
-                var ticker = '';
-                for (var ti = 0; ti < Math.min(tokens.length, 15); ti++) {
-                    var t = tokens[ti].toUpperCase();
-                    if (/^[A-Z]{3,5}$/.test(t) && !isSkipWord(t)) {
-                        ticker = t;
-                        break;
+                var ticker = widget.getAttribute('data-injected-ticker') || '';
+                if (!ticker) {
+                    for (var ti = 0; ti < Math.min(tokens.length, 15); ti++) {
+                        var t = tokens[ti].toUpperCase();
+                        if (/^[A-Z]{3,5}$/.test(t) && !isSkipWord(t)) {
+                            ticker = t;
+                            break;
+                        }
                     }
                 }
 
