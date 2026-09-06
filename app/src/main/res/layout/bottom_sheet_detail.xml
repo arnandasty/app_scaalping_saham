@@ -352,7 +352,7 @@
                     android:textColor="@color/text_muted"
                     android:textSize="11sp" />
 
-                <!-- Mode Toggle: Scalping vs Swing -->
+                <!-- Mode Toggle: Scalping vs Swing vs Rescue -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -364,12 +364,12 @@
                         android:layout_width="0dp"
                         android:layout_height="32dp"
                         android:layout_weight="1"
-                        android:layout_marginEnd="4dp"
+                        android:layout_marginEnd="3dp"
                         android:background="@drawable/bg_chip_active"
                         android:gravity="center"
-                        android:text="⚡ Scalping (Live)"
+                        android:text="⚡ Scalping"
                         android:textColor="#FFFFFF"
-                        android:textSize="11sp"
+                        android:textSize="10sp"
                         android:textStyle="bold" />
 
                     <TextView
@@ -377,12 +377,25 @@
                         android:layout_width="0dp"
                         android:layout_height="32dp"
                         android:layout_weight="1"
-                        android:layout_marginStart="4dp"
+                        android:layout_marginHorizontal="3dp"
                         android:background="@drawable/bg_chip"
                         android:gravity="center"
-                        android:text="🌙 Swing Pendek (EOD)"
+                        android:text="🌙 Swing EOD"
                         android:textColor="@color/text_secondary"
-                        android:textSize="11sp"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chipModeRescue"
+                        android:layout_width="0dp"
+                        android:layout_height="32dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="3dp"
+                        android:background="@drawable/bg_chip"
+                        android:gravity="center"
+                        android:text="🩺 Rescue Porto"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="10sp"
                         android:textStyle="bold" />
                 </LinearLayout>
 

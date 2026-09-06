@@ -17,12 +17,15 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import com.scalping.assistant.MainActivity
 import com.scalping.assistant.R
 import com.scalping.assistant.data.models.StockAnalysis
 import com.scalping.assistant.data.repository.GroqAiRepository
 import com.scalping.assistant.data.repository.GroqAnalysisMode
+import com.scalping.assistant.data.repository.PortfolioTrade
 import com.scalping.assistant.data.repository.YahooFinanceRepository
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import java.util.Calendar
 import java.util.TimeZone
 
@@ -62,19 +65,36 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         val btnGroqSettings: Button = view.findViewById(R.id.btnGroqSettings)
         val chipModeScalping: TextView = view.findViewById(R.id.chipModeScalping)
         val chipModeSwing: TextView = view.findViewById(R.id.chipModeSwing)
+        val chipModeRescue: TextView = view.findViewById(R.id.chipModeRescue)
 
-        // Deteksi jam pasar: Jika bursa tutup (malam / akhir pekan), default-kan ke Mode Swing Pendek
-        selectedGroqMode = if (isMarketOpen()) GroqAnalysisMode.SCALPING else GroqAnalysisMode.SWING
-        updateModeUi(chipModeScalping, chipModeSwing, btnAskGroq, tvGroqSummary)
+        val activeTrade = getActivePortfolioTrade()
+        if (activeTrade != null) {
+            chipModeRescue.visibility = View.VISIBLE
+            // Jika sedang floating loss / harga di bawah modal, utamakan mode Dokter Rescue Porto
+            if (activeTrade.pnlPercent < 0 || (activeTrade.entryPrice > 0 && item.lastPrice < activeTrade.entryPrice)) {
+                selectedGroqMode = GroqAnalysisMode.PORTFOLIO_RESCUE
+            } else {
+                selectedGroqMode = if (isMarketOpen()) GroqAnalysisMode.SCALPING else GroqAnalysisMode.SWING
+            }
+        } else {
+            chipModeRescue.visibility = View.GONE
+            selectedGroqMode = if (isMarketOpen()) GroqAnalysisMode.SCALPING else GroqAnalysisMode.SWING
+        }
+        updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
 
         chipModeScalping.setOnClickListener {
             selectedGroqMode = GroqAnalysisMode.SCALPING
-            updateModeUi(chipModeScalping, chipModeSwing, btnAskGroq, tvGroqSummary)
+            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
         }
 
         chipModeSwing.setOnClickListener {
             selectedGroqMode = GroqAnalysisMode.SWING
-            updateModeUi(chipModeScalping, chipModeSwing, btnAskGroq, tvGroqSummary)
+            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
+        }
+
+        chipModeRescue.setOnClickListener {
+            selectedGroqMode = GroqAnalysisMode.PORTFOLIO_RESCUE
+            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
         }
 
         btnGroqSettings.setOnClickListener {
@@ -219,6 +239,19 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
 
         val btnDoneBuy = view.findViewById<android.widget.Button>(R.id.btnDoneBuy)
         val btnDoneSell = view.findViewById<android.widget.Button>(R.id.btnDoneSell)
+        val tvTradeStatus = view.findViewById<android.widget.TextView>(R.id.tvTradeStatus)
+
+        if (activeTrade != null) {
+            btnDoneSell.visibility = View.VISIBLE
+            btnDoneSell.text = "🔴 TUTUP POSISI (${activeTrade.lot} Lot)"
+            tvTradeStatus.visibility = View.VISIBLE
+            val pnlSign = if (activeTrade.pnlPercent >= 0) "+" else ""
+            tvTradeStatus.text = "📍 Posisi Aktif: ${activeTrade.lot} Lot @ Rp ${formatPrice(activeTrade.entryPrice)} ($pnlSign${String.format("%.2f", activeTrade.pnlPercent)}%)"
+            tvTradeStatus.setTextColor(if (activeTrade.pnlPercent < 0) Color.parseColor("#EF4444") else Color.parseColor("#10B981"))
+            etEntryPrice.setText(activeTrade.entryPrice.toString())
+            etLotAmount.setText(activeTrade.lot.toString())
+            btnDoneBuy.text = "➕ Tambah Lot (Averaging)"
+        }
 
         btnDoneBuy.setOnClickListener {
             val lotText = etLotAmount.text.toString()
@@ -328,25 +361,44 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
     private fun updateModeUi(
         chipScalping: TextView,
         chipSwing: TextView,
+        chipRescue: TextView,
         btnAskGroq: Button,
         tvGroqSummary: TextView
     ) {
-        if (selectedGroqMode == GroqAnalysisMode.SCALPING) {
-            chipScalping.setBackgroundResource(R.drawable.bg_chip_active)
-            chipScalping.setTextColor(Color.WHITE)
-            chipSwing.setBackgroundResource(R.drawable.bg_chip)
-            chipSwing.setTextColor(Color.parseColor("#94A3B8"))
+        when (selectedGroqMode) {
+            GroqAnalysisMode.SCALPING -> {
+                chipScalping.setBackgroundResource(R.drawable.bg_chip_active)
+                chipScalping.setTextColor(Color.WHITE)
+                chipSwing.setBackgroundResource(R.drawable.bg_chip)
+                chipSwing.setTextColor(Color.parseColor("#94A3B8"))
+                chipRescue.setBackgroundResource(R.drawable.bg_chip)
+                chipRescue.setTextColor(Color.parseColor("#94A3B8"))
 
-            btnAskGroq.text = "⚡ Minta Opini Scalper (Groq AI)"
-            btnAskGroq.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#F97316"))
-        } else {
-            chipScalping.setBackgroundResource(R.drawable.bg_chip)
-            chipScalping.setTextColor(Color.parseColor("#94A3B8"))
-            chipSwing.setBackgroundResource(R.drawable.bg_chip_active_blue)
-            chipSwing.setTextColor(Color.WHITE)
+                btnAskGroq.text = "⚡ Minta Opini Scalper (Groq AI)"
+                btnAskGroq.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#F97316"))
+            }
+            GroqAnalysisMode.SWING -> {
+                chipScalping.setBackgroundResource(R.drawable.bg_chip)
+                chipScalping.setTextColor(Color.parseColor("#94A3B8"))
+                chipSwing.setBackgroundResource(R.drawable.bg_chip_active_blue)
+                chipSwing.setTextColor(Color.WHITE)
+                chipRescue.setBackgroundResource(R.drawable.bg_chip)
+                chipRescue.setTextColor(Color.parseColor("#94A3B8"))
 
-            btnAskGroq.text = "🌙 Analisis Swing & Broksum (Groq AI)"
-            btnAskGroq.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#0EA5E9"))
+                btnAskGroq.text = "🌙 Analisis Swing & Broksum (Groq AI)"
+                btnAskGroq.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#0EA5E9"))
+            }
+            GroqAnalysisMode.PORTFOLIO_RESCUE -> {
+                chipScalping.setBackgroundResource(R.drawable.bg_chip)
+                chipScalping.setTextColor(Color.parseColor("#94A3B8"))
+                chipSwing.setBackgroundResource(R.drawable.bg_chip)
+                chipSwing.setTextColor(Color.parseColor("#94A3B8"))
+                chipRescue.setBackgroundResource(R.drawable.bg_chip_active_red)
+                chipRescue.setTextColor(Color.WHITE)
+
+                btnAskGroq.text = "🩺 Diagnosa Penyelamatan Porto (Groq AI)"
+                btnAskGroq.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#EF4444"))
+            }
         }
     }
 
@@ -367,21 +419,38 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         btnAskGroq.isEnabled = false
         layoutGroqLoading.visibility = View.VISIBLE
 
-        if (selectedGroqMode == GroqAnalysisMode.SWING) {
-            tvGroqLoadingStatus.text = "Menghubungi Groq AI..."
-            tvGroqSummary.text = "Sedang menarik data harian Yahoo Finance & menganalisis posisi swing..."
-        } else {
-            tvGroqLoadingStatus.text = "Menghubungi Groq AI..."
-            tvGroqSummary.text = "Memproses analisis orderflow & bandarmologi scalping..."
+        when (selectedGroqMode) {
+            GroqAnalysisMode.PORTFOLIO_RESCUE -> {
+                tvGroqLoadingStatus.text = "Dokter Saham Mendiagnosa..."
+                tvGroqSummary.text = "Mendiagnosa akumulasi bandar, support teknikal harian, dan rasio risiko cut loss / avg down..."
+            }
+            GroqAnalysisMode.SWING -> {
+                tvGroqLoadingStatus.text = "Menghubungi Groq AI..."
+                tvGroqSummary.text = "Sedang menarik data harian Yahoo Finance & menganalisis posisi swing..."
+            }
+            else -> {
+                tvGroqLoadingStatus.text = "Menghubungi Groq AI..."
+                tvGroqSummary.text = "Memproses analisis orderflow & bandarmologi scalping..."
+            }
         }
         tvGroqSummary.setTextColor(Color.parseColor("#94A3B8"))
 
         lifecycleScope.launch {
-            val dailyTech = if (selectedGroqMode == GroqAnalysisMode.SWING) {
-                yahooRepo.fetchDailyTechnicals(item.ticker)
-            } else null
-
-            val result = groqRepo.getAiAnalysis(item, key, selectedGroqMode, dailyTech)
+            val result = if (selectedGroqMode == GroqAnalysisMode.PORTFOLIO_RESCUE) {
+                val trade = getActivePortfolioTrade() ?: PortfolioTrade(
+                    ticker = item.ticker,
+                    entryPrice = item.entryPrice,
+                    lot = 1,
+                    currentPrice = item.lastPrice
+                )
+                val dailyTech = yahooRepo.fetchDailyTechnicals(item.ticker)
+                groqRepo.getPortfolioRescueAnalysis(trade, item, item.bandarDetector, dailyTech, key)
+            } else {
+                val dailyTech = if (selectedGroqMode == GroqAnalysisMode.SWING) {
+                    yahooRepo.fetchDailyTechnicals(item.ticker)
+                } else null
+                groqRepo.getAiAnalysis(item, key, selectedGroqMode, dailyTech)
+            }
             if (!isAdded) return@launch
 
             btnAskGroq.isEnabled = true
@@ -390,7 +459,11 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
             if (result.isSuccess) {
                 tvGroqSummary.text = result.getOrNull()
                 tvGroqSummary.setTextColor(Color.parseColor("#F1F5F9"))
-                btnAskGroq.text = if (selectedGroqMode == GroqAnalysisMode.SWING) "🔄 Segarkan Analisis Swing" else "🔄 Segarkan Opini Scalper"
+                btnAskGroq.text = when (selectedGroqMode) {
+                    GroqAnalysisMode.PORTFOLIO_RESCUE -> "🔄 Segarkan Diagnosa Dokter Porto"
+                    GroqAnalysisMode.SWING -> "🔄 Segarkan Analisis Swing"
+                    else -> "🔄 Segarkan Opini Scalper"
+                }
             } else {
                 val err = result.exceptionOrNull()?.message ?: "Gagal menghubungi Groq"
                 tvGroqSummary.text = "⚠️ $err"
@@ -402,5 +475,36 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
                 }
             }
         }
+    }
+
+    private fun getActivePortfolioTrade(): PortfolioTrade? {
+        (activity as? MainActivity)?.getActiveTrade(item.ticker)?.let { return it }
+        val prefs = context?.getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE) ?: return null
+        val jsonStr = prefs.getString("portfolio_data", null) ?: return null
+        try {
+            val array = JSONArray(jsonStr)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                if (obj.optString("ticker").equals(item.ticker, ignoreCase = true) && obj.optBoolean("isActive", true)) {
+                    val entryPrice = obj.getInt("entryPrice")
+                    val currentPrice = if (item.lastPrice > 0) item.lastPrice else obj.optInt("currentPrice", entryPrice)
+                    val pnl = if (entryPrice > 0) ((currentPrice.toDouble() - entryPrice) / entryPrice) * 100.0 else 0.0
+                    return PortfolioTrade(
+                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                        ticker = obj.getString("ticker"),
+                        entryPrice = entryPrice,
+                        lot = obj.getInt("lot"),
+                        buyTime = obj.optLong("buyTime", System.currentTimeMillis()),
+                        currentPrice = currentPrice,
+                        pnlPercent = pnl,
+                        pnlRupiah = ((currentPrice - entryPrice) * obj.getInt("lot") * 100).toLong(),
+                        targetPrice = obj.optInt("targetPrice", 0),
+                        stopLoss = obj.optInt("stopLoss", 0),
+                        isActive = true
+                    )
+                }
+            }
+        } catch (e: Exception) {}
+        return null
     }
 }

@@ -359,6 +359,11 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Trade $ticker ditutup manual.", Toast.LENGTH_SHORT).show()
     }
 
+    fun getActiveTrade(ticker: String): com.scalping.assistant.data.repository.PortfolioTrade? {
+        if (!::orderBookRepo.isInitialized) return null
+        return orderBookRepo.getPortfolioList().firstOrNull { it.ticker.equals(ticker, ignoreCase = true) && it.isActive }
+    }
+
     // ============================================================
     // BANDAR DETECTOR AUTO-REQUEST
     // ============================================================
