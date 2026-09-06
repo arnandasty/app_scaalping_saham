@@ -611,7 +611,7 @@ class MainActivity : AppCompatActivity() {
                 try {
                     val arr = org.json.JSONArray(jsonArray)
                     val tickers = mutableListOf<String>()
-                    val maxTickers = Math.min(arr.length(), 35) // Ambil hingga 35 emiten teraktif
+                    val maxTickers = Math.min(arr.length(), 50) // Ambil hingga 50 emiten teraktif
                     for (i in 0 until maxTickers) {
                         val obj = arr.getJSONObject(i)
                         val t = obj.getString("ticker").trim().uppercase()

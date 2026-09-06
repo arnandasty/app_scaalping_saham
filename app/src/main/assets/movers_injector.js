@@ -128,8 +128,8 @@
                 });
             }
 
-            // Ambil hingga 35 emiten teratas agar pilihan pasar jauh lebih komprehensif
-            var topResults = results.slice(0, 35);
+            // Ambil hingga 50 emiten teratas agar pilihan pasar jauh lebih komprehensif
+            var topResults = results.slice(0, 50);
 
             // Debug info
             if (window.Android && window.Android.onMoversDebug) {

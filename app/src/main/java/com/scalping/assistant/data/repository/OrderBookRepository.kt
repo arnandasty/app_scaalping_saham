@@ -606,11 +606,27 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
                 }
             }
 
-            val analyses = analyzeSnapshots(currentSnapshots, isMovers = true)
-            val sorted = analyses.sortedByDescending { it.score }
-            _moversFlow.value = sorted
+            val newAnalyses = analyzeSnapshots(currentSnapshots, isMovers = true)
+            val currentList = _moversFlow.value.toMutableList()
+            if (currentList.isEmpty()) {
+                val sorted = newAnalyses.sortedByDescending { it.score }
+                _moversFlow.value = sorted
+            } else {
+                val newMap = newAnalyses.associateBy { it.ticker }
+                val merged = currentList.map { existing ->
+                    newMap[existing.ticker] ?: existing
+                }.toMutableList()
+
+                for (item in newAnalyses) {
+                    if (merged.none { it.ticker == item.ticker }) {
+                        merged.add(item)
+                    }
+                }
+                val sorted = merged.sortedByDescending { it.score }
+                _moversFlow.value = sorted
+            }
             refreshTopPicks()
-            updatePortfolioPositions(sorted)
+            updatePortfolioPositions(_moversFlow.value)
 
         } catch (e: Exception) {
             _statusFlow.value = "Error movers: ${e.localizedMessage}"
@@ -657,22 +673,28 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
                             val candles = yahooRepo.fetchIntradayCandles(ticker)
                             val techResult = TechnicalAnalyzer.analyze(ticker, candles, priceToUse.toDouble())
 
-                            val ofDetails = mutableListOf<String>()
-                            if (turnover.isNotEmpty()) {
-                                ofDetails.add("🔥 Turnover Pasar: $turnover")
+                            val moverHistory = historyMap["movers_$ticker"]
+                            val ofResult = if (moverHistory != null && moverHistory.isNotEmpty() && moverHistory.last().bidLevels.isNotEmpty()) {
+                                OrderFlowAnalyzer.analyze(ticker, moverHistory)
                             } else {
-                                ofDetails.add("📊 Data Movers teraktif Stockbit")
+                                val ofDetails = mutableListOf<String>()
+                                if (turnover.isNotEmpty()) {
+                                    ofDetails.add("🔥 Turnover Pasar: $turnover")
+                                } else {
+                                    ofDetails.add("📊 Data Movers teraktif Stockbit")
+                                }
+                                com.scalping.assistant.data.models.OrderFlowResult(
+                                    ticker = ticker,
+                                    totalScore = 12,
+                                    details = ofDetails
+                                )
                             }
-                            val ofResult = com.scalping.assistant.data.models.OrderFlowResult(
-                                ticker = ticker,
-                                totalScore = 12,
-                                details = ofDetails
-                            )
 
                             val prevRec = previousRecommendations["movers_$ticker"]
-                            val snapshotCount = historyMap["movers_$ticker"]?.size ?: 0
+                            val snapshotCount = moverHistory?.size ?: 0
                             val bandarStat = bandarDetectorMap[ticker]
-                            val analysis = ScoringEngine.generateAnalysis(snapshot, ofResult, techResult, sessionInfo, prevRec, snapshotCount, null, bandarStat)
+                            val tapeStat = tapeReadingMap[ticker]
+                            val analysis = ScoringEngine.generateAnalysis(snapshot, ofResult, techResult, sessionInfo, prevRec, snapshotCount, tapeStat, bandarStat)
                             previousRecommendations["movers_$ticker"] = analysis.recommendation
                             analysis
                         } catch (e: Exception) {
