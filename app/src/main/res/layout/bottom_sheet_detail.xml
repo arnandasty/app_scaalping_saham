@@ -324,7 +324,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="⚡ Groq AI (Meta Llama 3.1)"
+                        android:text="⚡ Groq AI (Senior Scalper)"
                         android:textColor="#F97316"
                         android:textSize="13sp"
                         android:textStyle="bold" />
@@ -347,7 +347,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="Opini second-opinion senior scalper via ultra-low latency Groq Llama 3.1"
+                    android:text="Opini second-opinion senior scalper via ultra-low latency Groq Cloud"
                     android:textColor="@color/text_muted"
                     android:textSize="11sp" />
 
@@ -366,7 +366,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:lineSpacingExtra="3dp"
-                        android:text="Ketuk tombol di bawah untuk meminta opini Groq Llama 3.1 terkait posisi akumulasi bandar dan timing entry."
+                        android:text="Ketuk tombol di bawah untuk meminta opini Groq AI terkait posisi akumulasi bandar dan timing entry."
                         android:textColor="@color/text_secondary"
                         android:textIsSelectable="true"
                         android:textSize="12sp" />
@@ -391,7 +391,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginStart="8dp"
-                            android:text="Menghubungi Groq Llama 3.1..."
+                            android:text="Menghubungi Groq AI..."
                             android:textColor="#F97316"
                             android:textSize="11sp" />
                     </LinearLayout>

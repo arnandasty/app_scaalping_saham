@@ -267,7 +267,7 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
 
         AlertDialog.Builder(ctx)
             .setTitle("⚙️ Konfigurasi Groq AI")
-            .setMessage("Model: Meta Llama 3.1 8B Instant (Gratis & Cepat <300ms)\n\nMasukkan API Key Groq Anda. Jika belum punya, ambil gratis tanpa kartu kredit di console.groq.com/keys")
+            .setMessage("Model: Groq Cloud Ultra-Fast (<300ms)\n\nMasukkan API Key Groq Anda. Jika belum punya, ambil gratis tanpa kartu kredit di console.groq.com/keys")
             .setView(container)
             .setPositiveButton("Simpan") { _, _ ->
                 val key = input.text.toString().trim()
@@ -306,7 +306,7 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
 
         btnAskGroq.isEnabled = false
         layoutGroqLoading.visibility = View.VISIBLE
-        tvGroqSummary.text = "Memproses analisis orderflow & bandarmologi Llama 3.1..."
+        tvGroqSummary.text = "Memproses analisis orderflow & bandarmologi..."
         tvGroqSummary.setTextColor(Color.parseColor("#94A3B8"))
 
         lifecycleScope.launch {
