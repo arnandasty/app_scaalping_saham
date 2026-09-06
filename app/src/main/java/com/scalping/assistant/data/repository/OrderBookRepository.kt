@@ -62,6 +62,9 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
     private val tapeReadingMap = mutableMapOf<String, com.scalping.assistant.data.models.TapeReadingStat>()
     private val bandarDetectorMap = mutableMapOf<String, com.scalping.assistant.data.models.BandarDetectorStat>()
 
+    private val _bandarDetectorFlow = MutableStateFlow<Map<String, com.scalping.assistant.data.models.BandarDetectorStat>>(emptyMap())
+    val bandarDetectorFlow: StateFlow<Map<String, com.scalping.assistant.data.models.BandarDetectorStat>> = _bandarDetectorFlow.asStateFlow()
+
     // ============================================================
     // State Flows untuk UI
     // ============================================================
@@ -499,6 +502,7 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
             }
 
             bandarDetectorMap[ticker] = stat
+            _bandarDetectorFlow.value = bandarDetectorMap.toMap()
             android.util.Log.d("BANDAR_DETECTOR", "Parsed $ticker (multiDay=$isMultiDay): $accdistStatus @ Rp $avgPrice, foreign: $foreignFlowStr, smartMoney: $smartMoney")
 
             reAnalyzeTicker(ticker)

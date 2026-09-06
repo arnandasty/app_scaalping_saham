@@ -29,7 +29,7 @@ import org.json.JSONArray
 import java.util.Calendar
 import java.util.TimeZone
 
-class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFragment() {
+class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFragment() {
 
     private val groqRepo = GroqAiRepository()
     private val yahooRepo = YahooFinanceRepository()
@@ -82,9 +82,25 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         }
         updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
 
+        val initialBandar = (activity as? MainActivity)?.orderBookRepo?.getBandarDetector(item.ticker) ?: item.bandarDetector
+        if (initialBandar != null) {
+            item = item.copy(bandarDetector = initialBandar)
+        }
+
         (activity as? MainActivity)?.let { main ->
-            main.requestBandarDetector(item.ticker)
-            main.requestMultiDayBandarDetector(item.ticker)
+            main.requestBandarDetector(item.ticker, force = true)
+            main.requestMultiDayBandarDetector(item.ticker, force = true)
+        }
+
+        // Live observation of bandar detector updates
+        viewLifecycleOwner.lifecycleScope.launch {
+            (activity as? MainActivity)?.orderBookRepo?.bandarDetectorFlow?.collect { map ->
+                val newStat = map[item.ticker]
+                if (newStat != null) {
+                    item = item.copy(bandarDetector = newStat)
+                    bindBandarDetector(newStat, view)
+                }
+            }
         }
 
         chipModeScalping.setOnClickListener {
@@ -94,13 +110,13 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
 
         chipModeSwing.setOnClickListener {
             selectedGroqMode = GroqAnalysisMode.SWING
-            (activity as? MainActivity)?.requestMultiDayBandarDetector(item.ticker)
+            (activity as? MainActivity)?.requestMultiDayBandarDetector(item.ticker, force = true)
             updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
         }
 
         chipModeRescue.setOnClickListener {
             selectedGroqMode = GroqAnalysisMode.PORTFOLIO_RESCUE
-            (activity as? MainActivity)?.requestMultiDayBandarDetector(item.ticker)
+            (activity as? MainActivity)?.requestMultiDayBandarDetector(item.ticker, force = true)
             updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
         }
 
@@ -153,53 +169,7 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         detailStopLoss.text = "Rp ${formatPrice(item.stopLoss)}"
 
         // Bandar Detector live stream binding
-        val detailBandarStatus: TextView = view.findViewById(R.id.detailBandarStatus)
-        val detailBandarAvg: TextView = view.findViewById(R.id.detailBandarAvg)
-        val detailBandarAmount: TextView = view.findViewById(R.id.detailBandarAmount)
-        val detailBandarPullbackNote: TextView = view.findViewById(R.id.detailBandarPullbackNote)
-
-        val bandar = item.bandarDetector
-        if (bandar != null) {
-            val statusClean = bandar.accdistStatus.trim()
-            val (statusText, statusBg, statusTextColor) = when (statusClean) {
-                "Big Acc" -> Triple("🟢 Big Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
-                "Acc" -> Triple("🟢 Normal Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
-                "Big Dist" -> Triple("🔴 Big Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
-                "Dist" -> Triple("🔴 Normal Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
-                else -> Triple("⚪ Neutral / Seimbang", R.drawable.bg_chip, Color.parseColor("#94A3B8"))
-            }
-            detailBandarStatus.text = statusText
-            detailBandarStatus.setBackgroundResource(statusBg)
-            detailBandarStatus.setTextColor(statusTextColor)
-
-            detailBandarAvg.text = if (bandar.averagePrice > 0) "Rp ${formatPrice(bandar.averagePrice.toInt())}" else "-"
-            detailBandarAmount.text = formatCurrencyShort(bandar.amountRupiah)
-
-            // Flow & Pullback Note
-            val avgDiff = if (bandar.averagePrice > 0) ((item.lastPrice - bandar.averagePrice) / bandar.averagePrice) * 100 else 0.0
-            val diffStr = if (avgDiff >= 0) "+%.1f%%".format(avgDiff) else "%.1f%%".format(avgDiff)
-            val note = when {
-                statusClean.contains("Dist") -> "⚠️ Hati-hati! Bandar sedang distribusi masif. Dilarang beli / hindari perangkap pucuk!"
-                bandar.averagePrice > 0 && item.lastPrice <= bandar.averagePrice -> "💎 Harga saat ini ($diffStr dari avg bandar) berada di bawah/setara harga modal bandar — Risk/Reward sangat menguntungkan!"
-                bandar.averagePrice > 0 && item.lastPrice > bandar.averagePrice -> "ℹ️ Harga saat ini $diffStr di atas avg bandar (Rp ${formatPrice(bandar.averagePrice.toInt())}). Pastikan ada bantalan support jika ingin masuk."
-                else -> "Status arus akumulasi bandar: $statusClean"
-            }
-            val extraDetails = buildString {
-                append(note)
-                if (bandar.topConcentration.isNotEmpty()) append("\n📊 ${bandar.topConcentration}")
-                if (bandar.foreignFlow.isNotEmpty()) append("\n🌐 ${bandar.foreignFlow}")
-                if (bandar.foreignFlowMultiDay.isNotEmpty()) append("\n🗓️ ${bandar.foreignFlowMultiDay}")
-                if (bandar.smartMoneySummary.isNotEmpty()) append("\n⚡ ${bandar.smartMoneySummary}")
-                if (bandar.topBrokers.isNotEmpty()) append("\n💼 ${bandar.topBrokers}")
-            }
-            detailBandarPullbackNote.text = extraDetails
-            detailBandarPullbackNote.setTextColor(if (statusClean.contains("Dist")) Color.parseColor("#EF4444") else Color.parseColor("#38BDF8"))
-        } else {
-            detailBandarStatus.text = "Menunggu Stream"
-            detailBandarAvg.text = "-"
-            detailBandarAmount.text = "-"
-            detailBandarPullbackNote.text = "Live broker detector sedang disinkronkan dari data session WebView..."
-        }
+        bindBandarDetector(item.bandarDetector, view)
 
         // Pisahkan warnings dari reasons agar tidak duplikat
         val pureReasons = item.reasons.filter { r ->
@@ -292,6 +262,55 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         btnDoneSell.setOnClickListener {
             (activity as? com.scalping.assistant.MainActivity)?.closeTradeByTicker(item.ticker)
             dismiss()
+        }
+    }
+
+    private fun bindBandarDetector(bandar: com.scalping.assistant.data.models.BandarDetectorStat?, root: View) {
+        val detailBandarStatus: TextView = root.findViewById(R.id.detailBandarStatus) ?: return
+        val detailBandarAvg: TextView = root.findViewById(R.id.detailBandarAvg) ?: return
+        val detailBandarAmount: TextView = root.findViewById(R.id.detailBandarAmount) ?: return
+        val detailBandarPullbackNote: TextView = root.findViewById(R.id.detailBandarPullbackNote) ?: return
+
+        if (bandar != null) {
+            val statusClean = bandar.accdistStatus.trim()
+            val (statusText, statusBg, statusTextColor) = when (statusClean) {
+                "Big Acc" -> Triple("🟢 Big Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
+                "Acc" -> Triple("🟢 Normal Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
+                "Big Dist" -> Triple("🔴 Big Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
+                "Dist" -> Triple("🔴 Normal Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
+                else -> Triple("⚪ Neutral / Seimbang", R.drawable.bg_chip, Color.parseColor("#94A3B8"))
+            }
+            detailBandarStatus.text = statusText
+            detailBandarStatus.setBackgroundResource(statusBg)
+            detailBandarStatus.setTextColor(statusTextColor)
+
+            detailBandarAvg.text = if (bandar.averagePrice > 0) "Rp ${formatPrice(bandar.averagePrice.toInt())}" else "-"
+            detailBandarAmount.text = formatCurrencyShort(bandar.amountRupiah)
+
+            val avgDiff = if (bandar.averagePrice > 0) ((item.lastPrice - bandar.averagePrice) / bandar.averagePrice) * 100 else 0.0
+            val diffStr = if (avgDiff >= 0) "+%.1f%%".format(avgDiff) else "%.1f%%".format(avgDiff)
+            val note = when {
+                statusClean.contains("Dist") -> "⚠️ Hati-hati! Bandar sedang distribusi masif. Dilarang beli / hindari perangkap pucuk!"
+                bandar.averagePrice > 0 && item.lastPrice <= bandar.averagePrice -> "💎 Harga saat ini ($diffStr dari avg bandar) berada di bawah/setara harga modal bandar — Risk/Reward sangat menguntungkan!"
+                bandar.averagePrice > 0 && item.lastPrice > bandar.averagePrice -> "ℹ️ Harga saat ini $diffStr di atas avg bandar (Rp ${formatPrice(bandar.averagePrice.toInt())}). Pastikan ada bantalan support jika ingin masuk."
+                else -> "Status arus akumulasi bandar: $statusClean"
+            }
+            val extraDetails = buildString {
+                append(note)
+                if (bandar.topConcentration.isNotEmpty()) append("\n📊 ${bandar.topConcentration}")
+                if (bandar.foreignFlow.isNotEmpty()) append("\n🌐 ${bandar.foreignFlow}")
+                if (bandar.foreignFlowMultiDay.isNotEmpty()) append("\n🗓️ ${bandar.foreignFlowMultiDay}")
+                if (bandar.smartMoneySummary.isNotEmpty()) append("\n⚡ ${bandar.smartMoneySummary}")
+                if (bandar.topBrokers.isNotEmpty()) append("\n💼 ${bandar.topBrokers}")
+            }
+            detailBandarPullbackNote.text = extraDetails
+            detailBandarPullbackNote.setTextColor(if (statusClean.contains("Dist")) Color.parseColor("#EF4444") else Color.parseColor("#38BDF8"))
+        } else {
+            detailBandarStatus.text = "Menghubungkan Data..."
+            detailBandarAvg.text = "-"
+            detailBandarAmount.text = "-"
+            detailBandarPullbackNote.text = "Sedang menarik data live broker detector & flow asing dari bursa..."
+            detailBandarPullbackNote.setTextColor(Color.parseColor("#94A3B8"))
         }
     }
 
@@ -455,6 +474,19 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         tvGroqSummary.setTextColor(Color.parseColor("#94A3B8"))
 
         lifecycleScope.launch {
+            val mainAct = activity as? MainActivity
+            var currentBandar = mainAct?.orderBookRepo?.getBandarDetector(item.ticker) ?: item.bandarDetector
+            if (currentBandar == null || (selectedGroqMode == GroqAnalysisMode.SWING && currentBandar.foreignFlowMultiDay.isEmpty())) {
+                mainAct?.requestBandarDetector(item.ticker, force = true)
+                mainAct?.requestMultiDayBandarDetector(item.ticker, force = true)
+                kotlinx.coroutines.delay(600L)
+                currentBandar = mainAct?.orderBookRepo?.getBandarDetector(item.ticker) ?: currentBandar
+            }
+
+            val analysisItem = (mainAct?.orderBookRepo?.getAnalysisForTicker(item.ticker) ?: item).let {
+                if (currentBandar != null) it.copy(bandarDetector = currentBandar) else it
+            }
+
             val result = if (selectedGroqMode == GroqAnalysisMode.PORTFOLIO_RESCUE) {
                 val trade = getActivePortfolioTrade() ?: PortfolioTrade(
                     ticker = item.ticker,
@@ -463,12 +495,12 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
                     currentPrice = item.lastPrice
                 )
                 val dailyTech = yahooRepo.fetchDailyTechnicals(item.ticker)
-                groqRepo.getPortfolioRescueAnalysis(trade, item, item.bandarDetector, dailyTech, key)
+                groqRepo.getPortfolioRescueAnalysis(trade, analysisItem, currentBandar, dailyTech, key)
             } else {
                 val dailyTech = if (selectedGroqMode == GroqAnalysisMode.SWING) {
                     yahooRepo.fetchDailyTechnicals(item.ticker)
                 } else null
-                groqRepo.getAiAnalysis(item, key, selectedGroqMode, dailyTech)
+                groqRepo.getAiAnalysis(analysisItem, key, selectedGroqMode, dailyTech)
             }
             if (!isAdded) return@launch
 

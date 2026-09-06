@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var pagerAdapter: com.scalping.assistant.ui.RankingPagerAdapter
     private lateinit var yahooRepo: YahooFinanceRepository
-    private lateinit var orderBookRepo: OrderBookRepository
+    lateinit var orderBookRepo: OrderBookRepository
 
     private val handler = Handler(Looper.getMainLooper())
     private var injectorScript = ""
@@ -69,6 +69,7 @@ class MainActivity : AppCompatActivity() {
     private val probeLogs = mutableListOf<String>()
     private var moversTickers = listOf<String>()
     private val lastRequestedBandar = mutableMapOf<String, Long>()
+    private val lastRequestedBandarMultiDay = mutableMapOf<String, Long>()
 
 
     // ============================================================
@@ -368,23 +369,55 @@ class MainActivity : AppCompatActivity() {
     // BANDAR DETECTOR AUTO-REQUEST
     // ============================================================
 
-    fun requestBandarDetector(ticker: String) {
+    fun requestBandarDetector(ticker: String, force: Boolean = false) {
         val now = System.currentTimeMillis()
         val last = lastRequestedBandar[ticker] ?: 0L
-        if (now - last < 30_000L) return
+        if (!force && now - last < 15_000L) return
         lastRequestedBandar[ticker] = now
 
         if (::webView.isInitialized && ticker.isNotEmpty()) {
             val js = """
                 (function() {
                     try {
-                        fetch("https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_LATEST", { credentials: "include" })
-                            .then(r => r.text())
-                            .then(txt => {
+                        var token = '';
+                        try {
+                            for (var k in localStorage) {
+                                if (!token && (k.toLowerCase().indexOf('token') >= 0 || k.toLowerCase().indexOf('auth') >= 0)) {
+                                    var val = localStorage.getItem(k);
+                                    if (val) {
+                                        if (val.indexOf('{') >= 0) {
+                                            try {
+                                                var p = JSON.parse(val);
+                                                token = p.token || p.accessToken || p.access_token || '';
+                                                if (!token && p.auth) {
+                                                    var p2 = typeof p.auth === 'string' ? JSON.parse(p.auth) : p.auth;
+                                                    token = p2.token || p2.accessToken || '';
+                                                }
+                                            } catch(e) {}
+                                        } else if (val.length > 20) {
+                                            token = val.replace(/^["']|["']$/g, '');
+                                        }
+                                    }
+                                }
+                            }
+                        } catch(err) {}
+
+                        var headers = { 'Accept': 'application/json' };
+                        if (token) headers['Authorization'] = 'Bearer ' + token;
+
+                        var url = "https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_LATEST";
+
+                        fetch(url, { credentials: "include", headers: headers })
+                            .then(function(r) { return r.text(); })
+                            .then(function(txt) {
                                 if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
                                     window.AndroidProbe.onProbeCaptured("FETCH_DATA", "https://exodus.stockbit.com/marketdetectors/" + "$ticker", txt);
                                 }
-                            }).catch(e => {});
+                            }).catch(function(err) {
+                                if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
+                                    window.AndroidProbe.onProbeCaptured("FETCH_ERR", "marketdetectors/$ticker", err.message || err.toString());
+                                }
+                            });
                     } catch(err) {}
                 })();
             """.trimIndent()
@@ -394,18 +427,55 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun requestMultiDayBandarDetector(ticker: String) {
+    fun requestMultiDayBandarDetector(ticker: String, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        val last = lastRequestedBandarMultiDay[ticker] ?: 0L
+        if (!force && now - last < 15_000L) return
+        lastRequestedBandarMultiDay[ticker] = now
+
         if (::webView.isInitialized && ticker.isNotEmpty()) {
             val js = """
                 (function() {
                     try {
-                        fetch("https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_ONE_WEEK", { credentials: "include" })
-                            .then(r => r.text())
-                            .then(txt => {
+                        var token = '';
+                        try {
+                            for (var k in localStorage) {
+                                if (!token && (k.toLowerCase().indexOf('token') >= 0 || k.toLowerCase().indexOf('auth') >= 0)) {
+                                    var val = localStorage.getItem(k);
+                                    if (val) {
+                                        if (val.indexOf('{') >= 0) {
+                                            try {
+                                                var p = JSON.parse(val);
+                                                token = p.token || p.accessToken || p.access_token || '';
+                                                if (!token && p.auth) {
+                                                    var p2 = typeof p.auth === 'string' ? JSON.parse(p.auth) : p.auth;
+                                                    token = p2.token || p2.accessToken || '';
+                                                }
+                                            } catch(e) {}
+                                        } else if (val.length > 20) {
+                                            token = val.replace(/^["']|["']$/g, '');
+                                        }
+                                    }
+                                }
+                            }
+                        } catch(err) {}
+
+                        var headers = { 'Accept': 'application/json' };
+                        if (token) headers['Authorization'] = 'Bearer ' + token;
+
+                        var url = "https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_ONE_WEEK";
+
+                        fetch(url, { credentials: "include", headers: headers })
+                            .then(function(r) { return r.text(); })
+                            .then(function(txt) {
                                 if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
                                     window.AndroidProbe.onProbeCaptured("FETCH_DATA", "https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?period=BROKER_SUMMARY_PERIOD_ONE_WEEK", txt);
                                 }
-                            }).catch(e => {});
+                            }).catch(function(err) {
+                                if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
+                                    window.AndroidProbe.onProbeCaptured("FETCH_ERR", "marketdetectors/$ticker multi", err.message || err.toString());
+                                }
+                            });
                     } catch(err) {}
                 })();
             """.trimIndent()

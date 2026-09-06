@@ -83,6 +83,7 @@ window.autoFillTickers = function(tickers) {
     var targetTicker = tickers[window._autoFillIndex];
     window._autoFillIndex++;
     
+    if (!targetTicker) return;
     var currentVal = (input.value || '').trim().toUpperCase();
     if (currentVal === targetTicker.toUpperCase()) return; // Sudah sesuai
     
