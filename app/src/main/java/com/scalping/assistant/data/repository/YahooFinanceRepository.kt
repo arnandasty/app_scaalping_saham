@@ -9,11 +9,26 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 
+data class DailyTechnicalSummary(
+    val lastClose: Double,
+    val sma20: Double,
+    val sma50: Double,
+    val rsi14: Double,
+    val high52w: Double,
+    val low52w: Double,
+    val volumeAvg5d: Long,
+    val lastVolume: Long,
+    val trend: String
+)
+
 class YahooFinanceRepository {
 
     // Cache candle per ticker untuk hemat request
     private val candleCache = mutableMapOf<String, Pair<Long, List<Candle>>>()
     private val CACHE_DURATION_MS = 60_000L // 1 menit
+
+    private val dailyCache = mutableMapOf<String, Pair<Long, DailyTechnicalSummary>>()
+    private val DAILY_CACHE_DURATION_MS = 300_000L // 5 menit
 
     suspend fun fetchIntradayCandles(ticker: String): List<Candle> = withContext(Dispatchers.IO) {
         val cleanTicker = ticker.trim().uppercase()
@@ -50,6 +65,138 @@ class YahooFinanceRepository {
         } catch (e: Exception) {
             cached?.second ?: emptyList()
         }
+    }
+
+    suspend fun fetchDailyTechnicals(ticker: String): DailyTechnicalSummary? = withContext(Dispatchers.IO) {
+        val cleanTicker = ticker.trim().uppercase()
+        val cached = dailyCache[cleanTicker]
+        val now = System.currentTimeMillis()
+        if (cached != null && (now - cached.first) < DAILY_CACHE_DURATION_MS) {
+            return@withContext cached.second
+        }
+
+        try {
+            val symbol = if (cleanTicker.endsWith(".JK")) cleanTicker else "$cleanTicker.JK"
+            val urlString = "https://query1.finance.yahoo.com/v8/finance/chart/$symbol?interval=1d&range=3mo"
+            val url = URL(urlString)
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 4000
+                readTimeout = 4000
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            }
+
+            if (conn.responseCode != 200) {
+                return@withContext cached?.second
+            }
+
+            val response = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+            val root = JSONObject(response)
+            val chart = root.getJSONObject("chart")
+            val resultArray = chart.getJSONArray("result")
+            if (resultArray.length() == 0) return@withContext cached?.second
+
+            val resultObj = resultArray.getJSONObject(0)
+            val meta = resultObj.optJSONObject("meta")
+            val high52w = meta?.optDouble("fiftyTwoWeekHigh", 0.0) ?: 0.0
+            val low52w = meta?.optDouble("fiftyTwoWeekLow", 0.0) ?: 0.0
+
+            val indicators = resultObj.getJSONObject("indicators")
+            val quoteArray = indicators.getJSONArray("quote")
+            if (quoteArray.length() == 0) return@withContext cached?.second
+
+            val quoteObj = quoteArray.getJSONObject(0)
+            val closesArr = quoteObj.optJSONArray("close") ?: return@withContext cached?.second
+            val volumesArr = quoteObj.optJSONArray("volume")
+
+            val closes = mutableListOf<Double>()
+            val volumes = mutableListOf<Long>()
+
+            for (i in 0 until closesArr.length()) {
+                if (!closesArr.isNull(i)) {
+                    closes.add(closesArr.getDouble(i))
+                    val v = if (volumesArr != null && !volumesArr.isNull(i)) volumesArr.getLong(i) else 0L
+                    volumes.add(v)
+                }
+            }
+
+            if (closes.isEmpty()) return@withContext cached?.second
+
+            val lastClose = closes.last()
+            val lastVolume = if (volumes.isNotEmpty()) volumes.last() else 0L
+
+            // Hitung SMA 20
+            val sma20 = if (closes.size >= 20) {
+                closes.takeLast(20).average()
+            } else {
+                closes.average()
+            }
+
+            // Hitung SMA 50
+            val sma50 = if (closes.size >= 50) {
+                closes.takeLast(50).average()
+            } else {
+                closes.average()
+            }
+
+            // Hitung Volume rata-rata 5 hari
+            val volumeAvg5d = if (volumes.size >= 5) {
+                volumes.takeLast(5).average().toLong()
+            } else {
+                volumes.average().toLong()
+            }
+
+            // Hitung RSI 14
+            val rsi14 = calculateRsi(closes, 14)
+
+            val trend = when {
+                lastClose > sma20 && lastClose > sma50 -> "BULLISH UPTREND (Harga di atas MA20 & MA50)"
+                lastClose > sma20 && lastClose <= sma50 -> "POTENSI REBOUND (Di atas MA20 menguji MA50)"
+                lastClose <= sma20 && lastClose > sma50 -> "KONSOLIDASI (Di bawah MA20 di atas MA50)"
+                else -> "BEARISH DOWNTREND (Di bawah MA20 & MA50)"
+            }
+
+            val summary = DailyTechnicalSummary(
+                lastClose = lastClose,
+                sma20 = sma20,
+                sma50 = sma50,
+                rsi14 = rsi14,
+                high52w = if (high52w > 0.0) high52w else (closes.maxOrNull() ?: lastClose),
+                low52w = if (low52w > 0.0) low52w else (closes.minOrNull() ?: lastClose),
+                volumeAvg5d = volumeAvg5d,
+                lastVolume = lastVolume,
+                trend = trend
+            )
+
+            dailyCache[cleanTicker] = Pair(now, summary)
+            summary
+        } catch (e: Exception) {
+            cached?.second
+        }
+    }
+
+    private fun calculateRsi(closes: List<Double>, period: Int = 14): Double {
+        if (closes.size <= period) return 50.0
+        var gain = 0.0
+        var loss = 0.0
+        for (i in 1..period) {
+            val diff = closes[i] - closes[i - 1]
+            if (diff >= 0) gain += diff else loss -= diff
+        }
+        var avgGain = gain / period
+        var avgLoss = loss / period
+
+        for (i in (period + 1) until closes.size) {
+            val diff = closes[i] - closes[i - 1]
+            val currentGain = if (diff >= 0) diff else 0.0
+            val currentLoss = if (diff < 0) -diff else 0.0
+            avgGain = (avgGain * (period - 1) + currentGain) / period
+            avgLoss = (avgLoss * (period - 1) + currentLoss) / period
+        }
+
+        if (avgLoss == 0.0) return 100.0
+        val rs = avgGain / avgLoss
+        return (100.0 - (100.0 / (1.0 + rs))).coerceIn(0.0, 100.0)
     }
 
     private fun parseCandles(jsonString: String): List<Candle> {

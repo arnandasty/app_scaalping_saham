@@ -4,7 +4,25 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 
 ---
 
-## [v2.1] - 2026-09-06 (Terkini)
+## [v2.2] - 2026-09-06 (Terkini)
+
+### Dual-Mode Groq AI: Scalping Intraday & Swing Pendek (End-of-Day Broksum)
+- **Dual-Mode AI Architecture:** Groq AI kini memiliki 2 mode analisis khusus:
+  1. `⚡ Mode Scalping (Live)`: Menganalisis tape reading, orderflow delta, modal bandar intraday, dan eksekusi cepat (HAKA / pullback).
+  2. `🌙 Mode Swing Pendek (EOD)`: Dirancang khusus saat bursa tutup (sore/malam/akhir pekan) untuk analisis menyeluruh posisi hold 2-7 hari.
+- **Integrasi Data Multi-Sumber (Anti-Halusinasi):**
+  - **Teknikal Harian (Daily Chart):** Menarik data candle harian 3 bulan dari Yahoo Finance (`query1.finance.yahoo.com`), menghitung MA20, MA50, RSI 14 harian, volume 5 hari bursa, dan range 52 minggu.
+  - **Bandarmologi & Broksum:** Menarik data resmi akumulasi/distribusi dan harga modal bandar dari sesi login Stockbit.
+- **Output Swing Terstruktur 3-Pilar:**
+  - 🕵️ **Bandarmologi & Broksum:** Evaluasi akumulasi harian & letak modal bandar vs closing price.
+  - 📊 **Struktur Teknikal Harian:** Posisi candlestick terhadap MA20/MA50 & kondisi RSI 14 (oversold/overbought).
+  - 💡 **Keputusan & Plan Swing:** Rekomendasi tegas (`BUY SWING` / `WAIT ON DIP` / `AVOID`), Buy Range, Target Profit (+4% s/d +12%), dan Cut Loss level.
+- **Deteksi Otomatis Jam Pasar:** Secara cerdas mengaktifkan default `🌙 Swing Pendek` jika bursa sedang tutup (malam/akhir pekan) dan `⚡ Scalping` saat market aktif, dengan tombol toggle interaktif yang dapat diganti kapan saja.
+- **Auto-Fallback Model:** Menggunakan model unggulan `groq/compound-mini` & `openai/gpt-oss-20b` dengan auto-fallback jika salah satu model sedang maintenance.
+
+---
+
+## [v2.1] - 2026-09-06
 
 ### Integrasi On-Demand Groq AI (Meta Llama 3.1 8B Instant)
 - **Second-Opinion Senior Scalper AI:** Integrasi model LLM berkecepatan tinggi (*sub-300ms inference*) via `GroqAiRepository` langsung dari perangkat Android tanpa perantara cloud backend.

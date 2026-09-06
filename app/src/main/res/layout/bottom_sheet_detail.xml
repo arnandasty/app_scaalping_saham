@@ -344,12 +344,47 @@
                 </LinearLayout>
 
                 <TextView
+                    android:id="@+id/tvGroqSubtitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="Opini second-opinion senior scalper via ultra-low latency Groq Cloud"
+                    android:text="Opini second-opinion scalper &amp; swing via ultra-low latency Groq Cloud"
                     android:textColor="@color/text_muted"
                     android:textSize="11sp" />
+
+                <!-- Mode Toggle: Scalping vs Swing -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/chipModeScalping"
+                        android:layout_width="0dp"
+                        android:layout_height="32dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/bg_chip_active"
+                        android:gravity="center"
+                        android:text="⚡ Scalping (Live)"
+                        android:textColor="#FFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chipModeSwing"
+                        android:layout_width="0dp"
+                        android:layout_height="32dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_chip"
+                        android:gravity="center"
+                        android:text="🌙 Swing Pendek (EOD)"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
 
                 <!-- Result Box -->
                 <LinearLayout

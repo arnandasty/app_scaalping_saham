@@ -11,6 +11,11 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
+enum class GroqAnalysisMode {
+    SCALPING,
+    SWING
+}
+
 class GroqAiRepository {
 
     // Model candidate list dengan auto-fallback jika salah satu model dideprecate oleh Groq
@@ -21,43 +26,93 @@ class GroqAiRepository {
         "qwen/qwen3.6-27b"
     )
 
-    suspend fun getScalperOpinion(item: StockAnalysis, apiKey: String): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun getScalperOpinion(item: StockAnalysis, apiKey: String): Result<String> {
+        return getAiAnalysis(item, apiKey, GroqAnalysisMode.SCALPING, null)
+    }
+
+    suspend fun getAiAnalysis(
+        item: StockAnalysis,
+        apiKey: String,
+        mode: GroqAnalysisMode,
+        dailyTech: DailyTechnicalSummary? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
             return@withContext Result.failure(Exception("API Key belum disetel. Silakan masukkan Groq API Key Anda."))
         }
 
-        val systemPrompt = """
-            Kamu adalah Chief Scalper & Spesialis Bandarmologi di Bursa Efek Indonesia (IDX).
-            Berikan opini trading scalping yang sangat singkat, padat, dan langsung to-the-point (maksimal 2-3 kalimat).
-            Sorot:
-            1. Aksi bandar & letak modal rata-rata bandar (apakah harga saat ini masih murah/di bawah modal bandar, atau rawan guyuran).
-            2. Saran tindakan scalping konkret (apakah boleh HAKA, tunggu pullback ke support, atau AVOID).
-            Gunakan gaya bahasa trader profesional Indonesia yang lugas tanpa salam pembuka atau penutup formal.
-        """.trimIndent()
+        val systemPrompt = if (mode == GroqAnalysisMode.SCALPING) {
+            """
+                Kamu adalah Chief Scalper & Spesialis Bandarmologi di Bursa Efek Indonesia (IDX).
+                Fokus: Intraday Scalping & Tape Reading saat market aktif.
+                Berikan opini trading scalping yang sangat singkat, padat, dan langsung to-the-point (maksimal 2-3 kalimat):
+                1. Aksi bandar & letak modal rata-rata bandar (apakah harga saat ini masih murah/di bawah modal bandar, atau rawan guyuran).
+                2. Saran tindakan scalping konkret (apakah boleh HAKA, tunggu pullback ke support, atau AVOID).
+                Gunakan gaya bahasa trader profesional Indonesia yang lugas tanpa basa-basi formal.
+            """.trimIndent()
+        } else {
+            """
+                Kamu adalah Senior Swing Trader & Pakar Bandarmologi di Bursa Efek Indonesia (IDX).
+                Fokus: Analisis Pasca Penutupan Pasar (End-of-Day) untuk Strategi Swing Pendek / Hold 2-7 Hari.
+                Berikan analisis yang menyeluruh, komprehensif, namun tetap padat & ringkas (dalam 3 poin terstruktur dengan bullet):
+                • 🕵️ Bandarmologi & Broksum: Evaluasi aksi akumulasi/distribusi bandar harian, perbandingan harga closing vs modal bandar (Average Price), dan potensi akumulasi diam-diam.
+                • 📊 Struktur Teknikal Harian: Posisi harga terhadap MA20 & MA50 (fase uptrend/rebound/downtrend), kondisi RSI 14 (oversold/akumulasi/overbought), dan pergerakan volume.
+                • 💡 Keputusan & Plan Swing:
+                  - Rekomendasi: [BUY SWING] / [WAIT ON DIP] / [AVOID]
+                  - Area Beli Aman (Buy Range)
+                  - Target Profit Swing (+4% s/d +12%)
+                  - Stop Loss / Invalidation jika breakdown.
+                Gunakan gaya bahasa trader profesional Indonesia yang objektif, tajam, dan realistis tanpa salam pembuka atau penutup formal.
+            """.trimIndent()
+        }
 
         val bandarInfo = if (item.bandarDetector != null) {
-            "Bandar Detector: ${item.bandarDetector.accdistStatus} @ Rp ${item.bandarDetector.averagePrice.toInt()} (Total: Rp ${item.bandarDetector.amountRupiah})"
+            "Bandar Detector: ${item.bandarDetector.accdistStatus} @ Rp ${item.bandarDetector.averagePrice.toInt()} (Total Nilai: ${formatCurrencyShort(item.bandarDetector.amountRupiah)})"
         } else {
-            "Bandar Detector: Menunggu data"
+            "Bandar Detector: Menunggu data bursa"
         }
 
-        val tapeInfo = if (item.tapeReading != null) {
-            "Tape Reading: HAKA ${item.tapeReading.totalHakaLot} lot vs HAKI ${item.tapeReading.totalHakiLot} lot"
+        val userContent = if (mode == GroqAnalysisMode.SCALPING) {
+            val tapeInfo = if (item.tapeReading != null) {
+                "Tape Reading: HAKA ${item.tapeReading.totalHakaLot} lot vs HAKI ${item.tapeReading.totalHakiLot} lot"
+            } else {
+                "Tape Reading: Normal"
+            }
+            """
+                Data Saham: ${item.ticker}
+                Harga Saat Ini: Rp ${item.lastPrice} (${if (item.changePercent > 0) "+" else ""}${item.changePercent}%)
+                Rekomendasi Algoritma: ${item.recommendation.label} (Skor: ${item.score}/100, Gaya: ${item.style})
+                $bandarInfo
+                $tapeInfo
+                Orderflow Delta: ${item.orderFlow.cumulativeDelta} lot, Fake Wall: ${item.orderFlow.hasFakeWall}, Akumulasi: ${item.orderFlow.hasAccumulation}
+                Support: Rp ${item.technical.nearestSupport.toInt()} | Resisten: Rp ${item.technical.nearestResistance.toInt()}
+                Trading Plan Scalping: Entry Rp ${item.entryPrice}, Target Rp ${item.targetPrice}, Stop Loss Rp ${item.stopLoss}
+            """.trimIndent()
         } else {
-            "Tape Reading: Normal"
+            val techInfo = if (dailyTech != null) {
+                """
+                Teknikal Daily Chart (Yahoo Finance Multi-Day):
+                - Trend: ${dailyTech.trend}
+                - MA20 Harian: Rp ${dailyTech.sma20.toInt()} | MA50 Harian: Rp ${dailyTech.sma50.toInt()}
+                - RSI(14) Harian: ${String.format("%.1f", dailyTech.rsi14)} (${if (dailyTech.rsi14 < 35) "Oversold/Area Akumulasi Murah" else if (dailyTech.rsi14 > 70) "Overbought/Area Rawan Profit Taking" else "Netral"})
+                - Volume Terakhir: ${formatCurrencyShort(dailyTech.lastVolume)} lot (Rata-rata 5 Hari: ${formatCurrencyShort(dailyTech.volumeAvg5d)} lot)
+                - Range 52 Minggu: High Rp ${dailyTech.high52w.toInt()} | Low Rp ${dailyTech.low52w.toInt()}
+                """.trimIndent()
+            } else {
+                "Teknikal Daily Chart: Menggunakan pivot dinamis (Support Rp ${item.technical.nearestSupport.toInt()} | Resisten Rp ${item.technical.nearestResistance.toInt()})"
+            }
+
+            """
+                Analisis Swing Pendek Pasca Penutupan Pasar
+                Saham: ${item.ticker}
+                Harga Penutupan: Rp ${item.lastPrice} (${if (item.changePercent > 0) "+" else ""}${item.changePercent}%)
+                $bandarInfo
+                $techInfo
+                Support Kuat: Rp ${item.technical.nearestSupport.toInt()} | Resisten Kuat: Rp ${item.technical.nearestResistance.toInt()}
+                Trading Plan Referensi Algoritma: Entry Rp ${item.entryPrice}, Target Rp ${item.targetPrice}, Stop Loss Rp ${item.stopLoss}
+            """.trimIndent()
         }
 
-        val userContent = """
-            Data Saham: ${item.ticker}
-            Harga Saat Ini: Rp ${item.lastPrice} (${if (item.changePercent > 0) "+" else ""}${item.changePercent}%)
-            Rekomendasi Algoritma: ${item.recommendation.label} (Skor: ${item.score}/100, Gaya: ${item.style})
-            $bandarInfo
-            $tapeInfo
-            Orderflow Delta: ${item.orderFlow.cumulativeDelta} lot, Fake Wall: ${item.orderFlow.hasFakeWall}, Akumulasi: ${item.orderFlow.hasAccumulation}
-            Support: Rp ${item.technical.nearestSupport.toInt()} | Resisten: Rp ${item.technical.nearestResistance.toInt()}
-            Trading Plan: Entry Rp ${item.entryPrice}, Target Rp ${item.targetPrice}, Stop Loss Rp ${item.stopLoss}
-        """.trimIndent()
-
+        val maxTokens = if (mode == GroqAnalysisMode.SWING) 400 else 220
         var lastException: Exception? = null
 
         for (model in candidateModels) {
@@ -88,7 +143,7 @@ class GroqAiRepository {
                     put("model", model)
                     put("messages", messages)
                     put("temperature", 0.3)
-                    put("max_tokens", 220)
+                    put("max_tokens", maxTokens)
                 }
 
                 OutputStreamWriter(conn.outputStream).use { writer ->
@@ -120,7 +175,6 @@ class GroqAiRepository {
                         errorText
                     }
 
-                    // Jika error 404 (model not found), coba model kandidat berikutnya
                     if (responseCode == 404 || errorMsg.contains("model", ignoreCase = true)) {
                         lastException = Exception("Groq ($model): $errorMsg")
                         continue
@@ -134,5 +188,17 @@ class GroqAiRepository {
         }
 
         Result.failure(lastException ?: Exception("Gagal menghubungi Groq AI"))
+    }
+
+    private fun formatCurrencyShort(amount: Long): String {
+        val absVal = kotlin.math.abs(amount).toDouble()
+        val sign = if (amount < 0) "-" else ""
+        return when {
+            absVal >= 1_000_000_000_000.0 -> "${sign}Rp %.1f T".format(absVal / 1_000_000_000_000.0)
+            absVal >= 1_000_000_000.0 -> "${sign}Rp %.1f M".format(absVal / 1_000_000_000.0)
+            absVal >= 1_000_000.0 -> "${sign}Rp %.1f Jt".format(absVal / 1_000_000.0)
+            absVal > 0 -> "${sign}Rp ${amount}"
+            else -> "Rp 0"
+        }
     }
 }
