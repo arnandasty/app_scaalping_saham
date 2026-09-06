@@ -479,8 +479,12 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
             if (currentBandar == null || (selectedGroqMode == GroqAnalysisMode.SWING && currentBandar.foreignFlowMultiDay.isEmpty())) {
                 mainAct?.requestBandarDetector(item.ticker, force = true)
                 mainAct?.requestMultiDayBandarDetector(item.ticker, force = true)
-                kotlinx.coroutines.delay(600L)
-                currentBandar = mainAct?.orderBookRepo?.getBandarDetector(item.ticker) ?: currentBandar
+                var attempts = 0
+                while ((currentBandar == null || (selectedGroqMode == GroqAnalysisMode.SWING && currentBandar?.foreignFlowMultiDay.isNullOrEmpty())) && attempts < 6) {
+                    kotlinx.coroutines.delay(300L)
+                    currentBandar = mainAct?.orderBookRepo?.getBandarDetector(item.ticker) ?: currentBandar
+                    attempts++
+                }
             }
 
             val analysisItem = (mainAct?.orderBookRepo?.getAnalysisForTicker(item.ticker) ?: item).let {

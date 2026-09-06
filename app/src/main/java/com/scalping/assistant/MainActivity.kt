@@ -35,6 +35,12 @@ import com.scalping.assistant.ui.DetailBottomSheet
 import com.scalping.assistant.ui.RankingAdapter
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -70,6 +76,8 @@ class MainActivity : AppCompatActivity() {
     private var moversTickers = listOf<String>()
     private val lastRequestedBandar = mutableMapOf<String, Long>()
     private val lastRequestedBandarMultiDay = mutableMapOf<String, Long>()
+    private var stockbitAuthToken = ""
+    private val PREF_STOCKBIT_TOKEN = "stockbit_auth_token"
 
 
     // ============================================================
@@ -184,6 +192,12 @@ class MainActivity : AppCompatActivity() {
         orderBookRepo = OrderBookRepository(yahooRepo)
 
         loadPortfolioFromPrefs()
+
+        val prefs = getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
+        stockbitAuthToken = prefs.getString(PREF_STOCKBIT_TOKEN, "") ?: ""
+        if (stockbitAuthToken.isNotEmpty()) {
+            Log.d("BANDAR_NATIVE", "Loaded saved Stockbit token (${stockbitAuthToken.take(8)}...)")
+        }
 
         try {
             injectorScript = assets.open("stockbit_injector.js").bufferedReader().use { it.readText() }
@@ -370,118 +384,142 @@ class MainActivity : AppCompatActivity() {
     // ============================================================
 
     fun requestBandarDetector(ticker: String, force: Boolean = false) {
+        val clean = ticker.trim().uppercase()
+        if (clean.isEmpty()) return
         val now = System.currentTimeMillis()
-        val last = lastRequestedBandar[ticker] ?: 0L
-        if (!force && now - last < 15_000L) return
-        lastRequestedBandar[ticker] = now
+        val last = lastRequestedBandar[clean] ?: 0L
+        if (!force && now - last < 10_000L) return
+        lastRequestedBandar[clean] = now
 
-        if (::webView.isInitialized && ticker.isNotEmpty()) {
-            val js = """
-                (function() {
-                    try {
-                        var token = '';
-                        try {
-                            for (var k in localStorage) {
-                                if (!token && (k.toLowerCase().indexOf('token') >= 0 || k.toLowerCase().indexOf('auth') >= 0)) {
-                                    var val = localStorage.getItem(k);
-                                    if (val) {
-                                        if (val.indexOf('{') >= 0) {
-                                            try {
-                                                var p = JSON.parse(val);
-                                                token = p.token || p.accessToken || p.access_token || '';
-                                                if (!token && p.auth) {
-                                                    var p2 = typeof p.auth === 'string' ? JSON.parse(p.auth) : p.auth;
-                                                    token = p2.token || p2.accessToken || '';
-                                                }
-                                            } catch(e) {}
-                                        } else if (val.length > 20) {
-                                            token = val.replace(/^["']|["']$/g, '');
-                                        }
-                                    }
-                                }
-                            }
-                        } catch(err) {}
+        fetchBandarDetectorNative(clean, isMultiDay = false)
+    }
 
-                        var headers = { 'Accept': 'application/json' };
-                        if (token) headers['Authorization'] = 'Bearer ' + token;
+    fun requestMultiDayBandarDetector(ticker: String, force: Boolean = false) {
+        val clean = ticker.trim().uppercase()
+        if (clean.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val last = lastRequestedBandarMultiDay[clean] ?: 0L
+        if (!force && now - last < 10_000L) return
+        lastRequestedBandarMultiDay[clean] = now
 
-                        var url = "https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_LATEST";
+        fetchBandarDetectorNative(clean, isMultiDay = true)
+    }
 
-                        fetch(url, { credentials: "include", headers: headers })
-                            .then(function(r) { return r.text(); })
-                            .then(function(txt) {
-                                if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
-                                    window.AndroidProbe.onProbeCaptured("FETCH_DATA", "https://exodus.stockbit.com/marketdetectors/" + "$ticker", txt);
-                                }
-                            }).catch(function(err) {
-                                if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
-                                    window.AndroidProbe.onProbeCaptured("FETCH_ERR", "marketdetectors/$ticker", err.message || err.toString());
-                                }
-                            });
-                    } catch(err) {}
-                })();
-            """.trimIndent()
-            runOnUiThread {
-                webView.evaluateJavascript(js, null)
+    private fun fetchBandarDetectorNative(ticker: String, isMultiDay: Boolean) {
+        val currentToken = getActiveStockbitToken()
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val urlString = if (isMultiDay) {
+                    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                    val cal = java.util.Calendar.getInstance()
+                    val toDate = sdf.format(cal.time)
+                    cal.add(java.util.Calendar.DAY_OF_YEAR, -7)
+                    val fromDate = sdf.format(cal.time)
+                    "https://exodus.stockbit.com/marketdetectors/$ticker?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&from=$fromDate&to=$toDate"
+                } else {
+                    "https://exodus.stockbit.com/marketdetectors/$ticker?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_LATEST"
+                }
+
+                val url = URL(urlString)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 6000
+                    readTimeout = 6000
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+                    setRequestProperty("Accept", "application/json, text/plain, */*")
+                    setRequestProperty("Origin", "https://stockbit.com")
+                    setRequestProperty("Referer", "https://stockbit.com/")
+
+                    val cookieManager = android.webkit.CookieManager.getInstance()
+                    val sbCookies = cookieManager.getCookie("https://stockbit.com") ?: ""
+                    val exCookies = cookieManager.getCookie("https://exodus.stockbit.com") ?: ""
+                    val combined = buildString {
+                        if (sbCookies.isNotEmpty()) append(sbCookies)
+                        if (exCookies.isNotEmpty()) {
+                            if (isNotEmpty()) append("; ")
+                            append(exCookies)
+                        }
+                    }
+                    if (combined.isNotEmpty()) {
+                        setRequestProperty("Cookie", combined)
+                    }
+                    if (currentToken.isNotEmpty()) {
+                        setRequestProperty("Authorization", "Bearer $currentToken")
+                    }
+                }
+
+                val code = conn.responseCode
+                Log.d("BANDAR_NATIVE", "[$code] $ticker (multiDay=$isMultiDay) -> Token len: ${currentToken.length}")
+                if (code == 200) {
+                    val json = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+                    Log.d("BANDAR_NATIVE", "✅ Sukses ambil Bandar Detector $ticker (multiDay=$isMultiDay) - ${json.length} bytes")
+                    withContext(Dispatchers.Main) {
+                        orderBookRepo.processBandarDetectorJson(urlString, json)
+                    }
+                } else {
+                    val err = conn.errorStream?.let { BufferedReader(InputStreamReader(it)).use { r -> r.readText() } } ?: ""
+                    Log.w("BANDAR_NATIVE", "⚠️ HTTP $code untuk $ticker (multiDay=$isMultiDay): $err")
+                    if (code == 401) {
+                        triggerTokenExtraction()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("BANDAR_NATIVE", "Error fetch native $ticker (multiDay=$isMultiDay): ${e.message}")
             }
         }
     }
 
-    fun requestMultiDayBandarDetector(ticker: String, force: Boolean = false) {
-        val now = System.currentTimeMillis()
-        val last = lastRequestedBandarMultiDay[ticker] ?: 0L
-        if (!force && now - last < 15_000L) return
-        lastRequestedBandarMultiDay[ticker] = now
-
-        if (::webView.isInitialized && ticker.isNotEmpty()) {
-            val js = """
-                (function() {
-                    try {
-                        var token = '';
-                        try {
-                            for (var k in localStorage) {
-                                if (!token && (k.toLowerCase().indexOf('token') >= 0 || k.toLowerCase().indexOf('auth') >= 0)) {
-                                    var val = localStorage.getItem(k);
-                                    if (val) {
-                                        if (val.indexOf('{') >= 0) {
-                                            try {
-                                                var p = JSON.parse(val);
-                                                token = p.token || p.accessToken || p.access_token || '';
-                                                if (!token && p.auth) {
-                                                    var p2 = typeof p.auth === 'string' ? JSON.parse(p.auth) : p.auth;
-                                                    token = p2.token || p2.accessToken || '';
-                                                }
-                                            } catch(e) {}
-                                        } else if (val.length > 20) {
-                                            token = val.replace(/^["']|["']$/g, '');
-                                        }
-                                    }
-                                }
-                            }
-                        } catch(err) {}
-
-                        var headers = { 'Accept': 'application/json' };
-                        if (token) headers['Authorization'] = 'Bearer ' + token;
-
-                        var url = "https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_ONE_WEEK";
-
-                        fetch(url, { credentials: "include", headers: headers })
-                            .then(function(r) { return r.text(); })
-                            .then(function(txt) {
-                                if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
-                                    window.AndroidProbe.onProbeCaptured("FETCH_DATA", "https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?period=BROKER_SUMMARY_PERIOD_ONE_WEEK", txt);
-                                }
-                            }).catch(function(err) {
-                                if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
-                                    window.AndroidProbe.onProbeCaptured("FETCH_ERR", "marketdetectors/$ticker multi", err.message || err.toString());
-                                }
-                            });
-                    } catch(err) {}
-                })();
-            """.trimIndent()
-            runOnUiThread {
-                webView.evaluateJavascript(js, null)
+    private fun getActiveStockbitToken(): String {
+        // 1. Cek langsung dari cookies CookieManager
+        val fromCookie = extractTokenFromCookies()
+        if (fromCookie.isNotEmpty()) {
+            if (fromCookie != stockbitAuthToken) {
+                stockbitAuthToken = fromCookie
+                getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(PREF_STOCKBIT_TOKEN, fromCookie)
+                    .apply()
             }
+            return fromCookie
+        }
+
+        // 2. Gunakan token di memori atau prefs jika valid
+        if (stockbitAuthToken.startsWith("eyJ") && stockbitAuthToken.length > 80) {
+            return stockbitAuthToken
+        }
+
+        return ""
+    }
+
+    private fun extractTokenFromCookies(): String {
+        try {
+            val cookieManager = android.webkit.CookieManager.getInstance()
+            val sbCookies = cookieManager.getCookie("https://stockbit.com") ?: ""
+            if (sbCookies.isNotEmpty()) {
+                val decoded = java.net.URLDecoder.decode(sbCookies, "UTF-8")
+                val match = Regex(""""token":"([^"]+)"""").find(decoded)
+                if (match != null) {
+                    val cand = match.groupValues[1]
+                    if (cand.startsWith("eyJ") && cand.length > 80) {
+                        return cand
+                    }
+                }
+                val jwtMatch = Regex("""eyJ[a-zA-Z0-9_-]{15,}\.[a-zA-Z0-9_-]{15,}\.[a-zA-Z0-9_-]{15,}""").find(decoded)
+                if (jwtMatch != null && jwtMatch.value.length > 80) {
+                    return jwtMatch.value
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("BANDAR_NATIVE", "Error extracting token from cookie: ${e.message}")
+        }
+        return ""
+    }
+
+    fun triggerTokenExtraction() {
+        runOnUiThread {
+            if (!::webView.isInitialized) return@runOnUiThread
+            getActiveStockbitToken()
         }
     }
 
@@ -500,6 +538,10 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
+
         val cookieManager = android.webkit.CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -645,6 +687,19 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+
+            @android.webkit.JavascriptInterface
+            fun onTokenCaptured(token: String) {
+                val clean = if (token.startsWith("Bearer ", ignoreCase = true)) token.substring(7).trim() else token.trim()
+                if (clean.startsWith("eyJ") && clean.length > 80 && clean != stockbitAuthToken) {
+                    stockbitAuthToken = clean
+                    getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(PREF_STOCKBIT_TOKEN, clean)
+                        .apply()
+                    Log.d("BANDAR_NATIVE", "🔑 onTokenCaptured: tersimpan JWT (${clean.take(8)}... len: ${clean.length})")
+                }
+            }
         }
         webView.addJavascriptInterface(probeBridge, "AndroidProbe")
         webViewMovers.addJavascriptInterface(probeBridge, "AndroidProbe")
@@ -690,6 +745,7 @@ class MainActivity : AppCompatActivity() {
                     view.evaluateJavascript(injectorScript, null)
                 }
                 if (url.contains("stockbit.com") && !url.contains("/login")) {
+                    triggerTokenExtraction()
                     if (::webViewMovers.isInitialized && webViewMovers.url?.contains("/login") == true) {
                         webViewMovers.loadUrl("https://stockbit.com/orderbook")
                     }
