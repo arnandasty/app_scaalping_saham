@@ -75,6 +75,47 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         detailTarget.text = "Rp ${formatPrice(item.targetPrice)} (+${item.estimatedProfitPercent}%)"
         detailStopLoss.text = "Rp ${formatPrice(item.stopLoss)}"
 
+        // Bandar Detector live stream binding
+        val detailBandarStatus: TextView = view.findViewById(R.id.detailBandarStatus)
+        val detailBandarAvg: TextView = view.findViewById(R.id.detailBandarAvg)
+        val detailBandarAmount: TextView = view.findViewById(R.id.detailBandarAmount)
+        val detailBandarPullbackNote: TextView = view.findViewById(R.id.detailBandarPullbackNote)
+
+        val bandar = item.bandarDetector
+        if (bandar != null) {
+            val statusClean = bandar.accdistStatus.trim()
+            val (statusText, statusBg, statusTextColor) = when (statusClean) {
+                "Big Acc" -> Triple("🟢 Big Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
+                "Acc" -> Triple("🟢 Normal Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
+                "Big Dist" -> Triple("🔴 Big Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
+                "Dist" -> Triple("🔴 Normal Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
+                else -> Triple("⚪ Neutral / Seimbang", R.drawable.bg_chip, Color.parseColor("#94A3B8"))
+            }
+            detailBandarStatus.text = statusText
+            detailBandarStatus.setBackgroundResource(statusBg)
+            detailBandarStatus.setTextColor(statusTextColor)
+
+            detailBandarAvg.text = if (bandar.averagePrice > 0) "Rp ${formatPrice(bandar.averagePrice.toInt())}" else "-"
+            detailBandarAmount.text = formatCurrencyShort(bandar.amountRupiah)
+
+            // Flow & Pullback Note
+            val avgDiff = if (bandar.averagePrice > 0) ((item.lastPrice - bandar.averagePrice) / bandar.averagePrice) * 100 else 0.0
+            val diffStr = if (avgDiff >= 0) "+%.1f%%".format(avgDiff) else "%.1f%%".format(avgDiff)
+            val note = when {
+                statusClean.contains("Dist") -> "⚠️ Hati-hati! Bandar sedang distribusi masif. Dilarang beli / hindari perangkap pucuk!"
+                bandar.averagePrice > 0 && item.lastPrice <= bandar.averagePrice -> "💎 Harga saat ini ($diffStr dari avg bandar) berada di bawah/setara harga modal bandar — Risk/Reward sangat menguntungkan!"
+                bandar.averagePrice > 0 && item.lastPrice > bandar.averagePrice -> "ℹ️ Harga saat ini $diffStr di atas avg bandar (Rp ${formatPrice(bandar.averagePrice.toInt())}). Pastikan ada bantalan support jika ingin masuk."
+                else -> "Status arus akumulasi bandar: $statusClean"
+            }
+            detailBandarPullbackNote.text = note
+            detailBandarPullbackNote.setTextColor(if (statusClean.contains("Dist")) Color.parseColor("#EF4444") else Color.parseColor("#38BDF8"))
+        } else {
+            detailBandarStatus.text = "Menunggu Stream"
+            detailBandarAvg.text = "-"
+            detailBandarAmount.text = "-"
+            detailBandarPullbackNote.text = "Live broker detector sedang disinkronkan dari data session WebView..."
+        }
+
         // Pisahkan warnings dari reasons agar tidak duplikat
         val pureReasons = item.reasons.filter { r ->
             item.warnings.none { w -> w == r }
@@ -94,23 +135,36 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
             detailWarnings.setTextColor(Color.parseColor("#10B981"))
         }
 
-        val fibs = item.technical.fibLevels
+        val fibs = item.technical.fibLevels.filter { it.value > 0.0 }
         if (fibs.isNotEmpty()) {
             val fibText = fibs.entries.take(5).joinToString(" | ") { (k, v) ->
                 "$k: ${formatPrice(v.toInt())}"
             }
             detailFibonacci.text = fibText
         } else {
-            detailFibonacci.text = "Data candle teknikal sedang disinkronkan..."
+            val f38 = formatPrice(com.scalping.assistant.engine.PriceFraction.roundToValidTick((item.lastPrice * 1.025).toInt()))
+            val f50 = formatPrice(item.lastPrice)
+            val f61 = formatPrice(com.scalping.assistant.engine.PriceFraction.roundToValidTick((item.lastPrice * 0.975).toInt()))
+            detailFibonacci.text = "61.8%: Rp $f61 | 50.0%: Rp $f50 | 38.2%: Rp $f38 (Estimasi Intraday)"
         }
 
         val tech = item.technical
+        val s1 = if (tech.nearestSupport > 0) "Rp ${formatPrice(tech.nearestSupport.toInt())}" else "Rp ${formatPrice(com.scalping.assistant.engine.PriceFraction.roundDownToValidTick((item.lastPrice * 0.97).toInt()))}"
+        val r1 = if (tech.nearestResistance > 0) "Rp ${formatPrice(tech.nearestResistance.toInt())}" else "Rp ${formatPrice(com.scalping.assistant.engine.PriceFraction.roundUpToValidTick((item.lastPrice * 1.03).toInt()))}"
+        val s2 = if (tech.nearestSupport2 > 0) "Rp ${formatPrice(tech.nearestSupport2.toInt())}" else "-"
+        val r2 = if (tech.nearestResistance2 > 0) "Rp ${formatPrice(tech.nearestResistance2.toInt())}" else "-"
+        val vwapStr = if (tech.vwap > 0) "Rp ${formatPrice(tech.vwap.toInt())}" else "-"
+        val ema9Str = if (tech.ema9 > 0) "Rp ${formatPrice(tech.ema9.toInt())}" else "-"
+        val ema21Str = if (tech.ema21 > 0) "Rp ${formatPrice(tech.ema21.toInt())}" else "-"
+        val bbLowerStr = if (tech.bbLower > 0) "Rp ${formatPrice(tech.bbLower.toInt())}" else "-"
+        val bbUpperStr = if (tech.bbUpper > 0) "Rp ${formatPrice(tech.bbUpper.toInt())}" else "-"
+
         detailSupportResistance.text = """
-            S1 (Support Fibo): Rp ${formatPrice(tech.nearestSupport.toInt())} | R1 (Resistance): Rp ${formatPrice(tech.nearestResistance.toInt())}
-            S2 (Support Dinamis): Rp ${formatPrice(tech.nearestSupport2.toInt())} | R2 (Resis Dinamis): Rp ${formatPrice(tech.nearestResistance2.toInt())}
-            VWAP (Rata-rata Bandar): Rp ${formatPrice(tech.vwap.toInt())}
-            EMA 9: Rp ${formatPrice(tech.ema9.toInt())} | EMA 21: Rp ${formatPrice(tech.ema21.toInt())}
-            BB Bawah: Rp ${formatPrice(tech.bbLower.toInt())} | BB Atas: Rp ${formatPrice(tech.bbUpper.toInt())}
+            S1 (Support Utama): $s1 | R1 (Resisten Utama): $r1
+            S2 (Support Dinamis): $s2 | R2 (Resis Dinamis): $r2
+            VWAP: $vwapStr
+            EMA 9: $ema9Str | EMA 21: $ema21Str
+            BB Bawah: $bbLowerStr | BB Atas: $bbUpperStr
         """.trimIndent()
 
         val btnDoneBuy = view.findViewById<android.widget.Button>(R.id.btnDoneBuy)
@@ -141,5 +195,17 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
 
     private fun formatPrice(price: Int): String {
         return String.format("%,d", price).replace(',', '.')
+    }
+
+    private fun formatCurrencyShort(amount: Long): String {
+        val absVal = kotlin.math.abs(amount).toDouble()
+        val sign = if (amount < 0) "-" else ""
+        return when {
+            absVal >= 1_000_000_000_000.0 -> "${sign}Rp %.1f T".format(absVal / 1_000_000_000_000.0)
+            absVal >= 1_000_000_000.0 -> "${sign}Rp %.1f M".format(absVal / 1_000_000_000.0)
+            absVal >= 1_000_000.0 -> "${sign}Rp %.1f Jt".format(absVal / 1_000_000.0)
+            absVal > 0 -> "${sign}Rp ${formatPrice(absVal.toInt())}"
+            else -> "Rp 0"
+        }
     }
 }

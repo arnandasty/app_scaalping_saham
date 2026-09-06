@@ -33,6 +33,15 @@ data class TapeReadingStat(
     var lastUpdated: Long = System.currentTimeMillis()
 )
 
+data class BandarDetectorStat(
+    val ticker: String,
+    val accdistStatus: String = "Neutral", // "Big Acc", "Acc", "Neutral", "Dist", "Big Dist"
+    val averagePrice: Double = 0.0,
+    val amountRupiah: Long = 0L,
+    val volumeLot: Long = 0L,
+    val lastUpdated: Long = System.currentTimeMillis()
+)
+
 data class StockAnalysis(
     val ticker: String,
     val score: Int, // 0 - 100
@@ -50,6 +59,7 @@ data class StockAnalysis(
     val technical: TechnicalResult,
     val orderFlow: OrderFlowResult,
     val tapeReading: TapeReadingStat? = null,
+    val bandarDetector: BandarDetectorStat? = null,
     val snapshotCount: Int = 0,     // Jumlah snapshot yang sudah terkumpul (confidence level)
     val lastUpdated: Long = System.currentTimeMillis()
 )

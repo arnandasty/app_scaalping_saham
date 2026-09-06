@@ -19,6 +19,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import android.util.Log
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -64,7 +65,10 @@ class MainActivity : AppCompatActivity() {
     private var injectorScript = ""
     private var moversInjectorScript = ""
     private var streamInjectorScript = ""
+    private var streamProbeScript = ""
+    private val probeLogs = mutableListOf<String>()
     private var moversTickers = listOf<String>()
+    private val lastRequestedBandar = mutableMapOf<String, Long>()
 
 
     // ============================================================
@@ -83,11 +87,19 @@ class MainActivity : AppCompatActivity() {
 
     private val scrapingRunnable = object : Runnable {
         override fun run() {
-            if (::webView.isInitialized && injectorScript.isNotEmpty()) {
-                webView.evaluateJavascript(injectorScript, null)
+            if (::webView.isInitialized) {
+                if (streamProbeScript.isNotEmpty()) {
+                    webView.evaluateJavascript(streamProbeScript, null)
+                }
+                if (injectorScript.isNotEmpty()) {
+                    webView.evaluateJavascript(injectorScript, null)
+                }
             }
 
             if (::webViewMovers.isInitialized) {
+                if (streamProbeScript.isNotEmpty()) {
+                    webViewMovers.evaluateJavascript(streamProbeScript, null)
+                }
                 if (moversInjectorScript.isNotEmpty()) {
                     webViewMovers.evaluateJavascript(moversInjectorScript, null)
                 }
@@ -100,8 +112,13 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             
-            if (::webViewStream.isInitialized && streamInjectorScript.isNotEmpty()) {
-                webViewStream.evaluateJavascript(streamInjectorScript, null)
+            if (::webViewStream.isInitialized) {
+                if (streamProbeScript.isNotEmpty()) {
+                    webViewStream.evaluateJavascript(streamProbeScript, null)
+                }
+                if (streamInjectorScript.isNotEmpty()) {
+                    webViewStream.evaluateJavascript(streamInjectorScript, null)
+                }
             }
 
             handler.postDelayed(this, 1000L) // Ubah delay scraping jadi 1 detik agar stream lebih update
@@ -153,6 +170,9 @@ class MainActivity : AppCompatActivity() {
         tvLiveStatus = findViewById(R.id.tvLiveStatus)
         tvStockCount = findViewById(R.id.tvStockCount)
         tvStatusLog = findViewById(R.id.tvStatusLog)
+        tvStatusLog.setOnClickListener {
+            showProbeLogDialog()
+        }
         webViewContainer = findViewById(R.id.webViewContainer)
         dividerDragHandle = findViewById(R.id.dividerDragHandle)
         aiPanelContainer = findViewById(R.id.aiPanelContainer)
@@ -168,6 +188,7 @@ class MainActivity : AppCompatActivity() {
             injectorScript = assets.open("stockbit_injector.js").bufferedReader().use { it.readText() }
             moversInjectorScript = assets.open("movers_injector.js").bufferedReader().use { it.readText() }
             streamInjectorScript = assets.open("stream_injector.js").bufferedReader().use { it.readText() }
+            streamProbeScript = assets.open("stream_probe.js").bufferedReader().use { it.readText() }
         } catch (e: Exception) {
             tvStatusLog.text = "Gagal memuat injector: ${e.message}"
         }
@@ -339,6 +360,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
+    // BANDAR DETECTOR AUTO-REQUEST
+    // ============================================================
+
+    fun requestBandarDetector(ticker: String) {
+        val now = System.currentTimeMillis()
+        val last = lastRequestedBandar[ticker] ?: 0L
+        if (now - last < 30_000L) return
+        lastRequestedBandar[ticker] = now
+
+        if (::webView.isInitialized && ticker.isNotEmpty()) {
+            val js = """
+                (function() {
+                    try {
+                        fetch("https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_LATEST", { credentials: "include" })
+                            .then(r => r.text())
+                            .then(txt => {
+                                if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
+                                    window.AndroidProbe.onProbeCaptured("FETCH_DATA", "https://exodus.stockbit.com/marketdetectors/" + "$ticker", txt);
+                                }
+                            }).catch(e => {});
+                    } catch(err) {}
+                })();
+            """.trimIndent()
+            runOnUiThread {
+                webView.evaluateJavascript(js, null)
+            }
+        }
+    }
+
+    // ============================================================
     // WEBVIEW SETUP
     // ============================================================
 
@@ -384,6 +435,13 @@ class MainActivity : AppCompatActivity() {
                 lifecycleScope.launch {
                     orderBookRepo.processJsonData(json)
                 }
+                try {
+                    val arr = org.json.JSONArray(json)
+                    for (i in 0 until arr.length()) {
+                        val t = arr.getJSONObject(i).getString("ticker").trim().uppercase()
+                        requestBandarDetector(t)
+                    }
+                } catch (e: Exception) {}
             },
             onLoginNeeded = {
                 runOnUiThread {
@@ -408,7 +466,9 @@ class MainActivity : AppCompatActivity() {
                     val tickers = mutableListOf<String>()
                     for (i in 0 until Math.min(arr.length(), 6)) { // Ambil 6 teratas agar rotasi cukup cepat (18 detik/cycle)
                         val obj = arr.getJSONObject(i)
-                        tickers.add(obj.getString("ticker"))
+                        val t = obj.getString("ticker").trim().uppercase()
+                        tickers.add(t)
+                        requestBandarDetector(t)
                     }
                     if (tickers.isNotEmpty()) {
                         moversTickers = tickers
@@ -454,7 +514,58 @@ class MainActivity : AppCompatActivity() {
         }
         webViewStream.addJavascriptInterface(streamBridge, "AndroidStream")
 
+        val probeBridge = object {
+            @android.webkit.JavascriptInterface
+            fun onProbeCaptured(type: String, url: String, payload: String) {
+                Log.d("PROBE_STREAM", "[$type] $url -> $payload")
+                val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                val logEntry = "[$timestamp] [$type] $url\nPayload: $payload"
+                synchronized(probeLogs) {
+                    if (probeLogs.size >= 30) probeLogs.removeAt(0)
+                    probeLogs.add(logEntry)
+                }
+
+                if (url.contains("marketdetectors/") && (type == "XHR_DATA" || type == "FETCH_DATA")) {
+                    orderBookRepo.processBandarDetectorJson(url, payload)
+                }
+
+                if (type.startsWith("WS_") || type.startsWith("SSE_") || type.startsWith("FETCH_") || type.startsWith("XHR_")) {
+                    runOnUiThread {
+                        val shortUrl = if (url.length > 25) url.takeLast(25) else url
+                        val preview = if (payload.length > 40) payload.take(40) + "..." else payload
+                        tvStatusLog.text = "🎯 [$type] $shortUrl: $preview (Tap log)"
+                    }
+                }
+            }
+        }
+        webView.addJavascriptInterface(probeBridge, "AndroidProbe")
+        webViewMovers.addJavascriptInterface(probeBridge, "AndroidProbe")
+        webViewStream.addJavascriptInterface(probeBridge, "AndroidProbe")
+
+        webViewStream.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                if (streamProbeScript.isNotEmpty() && view != null) {
+                    view.evaluateJavascript(streamProbeScript, null)
+                }
+            }
+
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
+                if (streamProbeScript.isNotEmpty()) {
+                    view.evaluateJavascript(streamProbeScript, null)
+                }
+            }
+        }
+
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                if (streamProbeScript.isNotEmpty() && view != null) {
+                    view.evaluateJavascript(streamProbeScript, null)
+                }
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: ""
                 return !(url.startsWith("http://") || url.startsWith("https://"))
@@ -464,6 +575,9 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 progressBar.visibility = View.GONE
                 android.webkit.CookieManager.getInstance().flush()
+                if (streamProbeScript.isNotEmpty()) {
+                    view.evaluateJavascript(streamProbeScript, null)
+                }
                 if (injectorScript.isNotEmpty()) {
                     view.evaluateJavascript(injectorScript, null)
                 }
@@ -710,7 +824,20 @@ class MainActivity : AppCompatActivity() {
         builder.show()
     }
 
-
+    private fun showProbeLogDialog() {
+        val items = synchronized(probeLogs) { probeLogs.reversed().toTypedArray() }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("📡 Live Probe Logs (${items.size})")
+            .setItems(if (items.isEmpty()) arrayOf("Belum ada data WebSocket/SSE/Fetch tertangkap.\nSilakan pastikan Stockbit sudah login.") else items, null)
+            .setPositiveButton("Tutup", null)
+            .setNeutralButton("Salin Semua") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("Probe Logs", items.joinToString("\n---\n"))
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "Log disalin ke clipboard!", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
 
     private fun updateTotalCount() {
         val manualCount = orderBookRepo.manualFlow.value.size
@@ -743,5 +870,6 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(sessionTimerRunnable)
         webView.destroy()
         webViewMovers.destroy()
+        webViewStream.destroy()
     }
 }

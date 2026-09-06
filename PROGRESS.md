@@ -93,10 +93,27 @@ Aplikasi ini ditenagai oleh tiga mesin utama yang berjalan secara asinkron:
 
 ---
 
-## 5. Rencana & Pengujian Selanjutnya (Next Steps)
-* **Live Paper Trading (2 - 3 Hari):** Menguji sinyal STRONG BUY dan BUY selama jam operasional bursa (09.00 - 16.00 WIB) tanpa eksekusi dana riil untuk memvalidasi akurasi Tape Reading.
-* **Evaluasi Kecepatan Injeksi:** Mengamati konsumsi baterai dan kestabilan 4 WebView paralel saat pasar ramai transaksi.
-* **Kalibrasi Penalti Overbought:** Memastikan saham yang mengalami kenaikan tajam (> 15%) namun didukung volume masif tetap diberikan sinyal rasional tanpa terjebak FOMO.
+## 5. Upgrade V2: Local WebSocket Intercept, Bandar Detector, & Strategi Anti-Pucuk
+1. **Local WebView Stream Intercept (Zero-Cost, Zero-Server):**
+   - Menginjeksi `stream_probe.js` ke Chromium WebView untuk mencegat `window.WebSocket`, `window.EventSource`, `fetch`, dan `XMLHttpRequest`.
+   - Mengeliminasi kebutuhan server cloud (AWS EC2/FastAPI) dan menghindari resiko pemblokiran IP oleh Cloudflare.
+   - Mengalirkan stream data langsung ke Kotlin via `AndroidProbe`.
+2. **Integrasi Live Bandar Detector & Broker Distribution:**
+   - Menghubungkan endpoint resmi `exodus.stockbit.com/marketdetectors/{ticker}` secara lokal menggunakan sesi login aktif pengguna.
+   - Menarik status akumulasi/distribusi (`Big Acc`, `Acc`, `Neutral`, `Dist`, `Big Dist`), rata-rata harga modal bandar (*Average Price*), dan nominal transaksi (Rupiah).
+3. **Strategi Scalping "Akan Naik" (Early Momentum):**
+   - Filter ketat saham kenaikan awal **+0.5% s/d +5.0%** dengan lonjakan volume dan konfirmasi akumulasi bandar.
+   - Diberikan bonus skor (+8) dan gaya `🎯 Early Momentum (Akan Naik)`.
+4. **Proteksi Anti-Pucuk (Anti-FOMO Hard Block):**
+   - Saham $\ge +7.0\%$ yang masih berada di area *High* otomatis dikunci ke `WATCH`. Tidak ada rekomendasi `BUY` di pucuk.
+5. **Analisis Pullback Sehat vs Guyuran:**
+   - Koreksi $1.5\% - 5.5\%$ dianalisis: Jika bandar jualan masif $\rightarrow$ `AVOID` (Guyuran). Jika bandar bertahan di bantalan support $\rightarrow$ `BUY` (Buy on Pullback).
 
 ---
-*Dokumen ini diperbarui secara otomatis dan mencakup seluruh perombakan pipeline terbaru.*
+
+## 6. Rencana & Pengujian Live Market (Senin, 09:00 WIB)
+* **Checklist Pengujian:** Lihat panduan lengkap di [`PANDUAN_PENGUJIAN_SENIN.md`](file:///d:/WEB%20SAYA/info_saham/app_scalping/PANDUAN_PENGUJIAN_SENIN.md).
+* **Fokus Utama:** Menguji debit aliran *Running Trade tick-by-tick* saat bursa resmi dibuka pukul 09:00:00 WIB, memvalidasi akurasi status akumulasi bandar, serta menguji respon proteksi Anti-Pucuk pada saham-saham yang melonjak tinggi.
+
+---
+*Dokumen ini diperbarui secara berkala dan mencakup seluruh perkembangan arsitektur dan strategi scalping.*

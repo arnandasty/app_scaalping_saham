@@ -4,7 +4,21 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 
 ---
 
-## [v1.5] - 2026-09-04 (Terkini)
+## [v2.0] - 2026-09-06 (Terkini)
+
+### Local WebSocket Intercept, Live Bandar Detector, & Anti-Pucuk Rules
+- **Local WebView Network Intercept:** Injeksi `stream_probe.js` untuk mencegat `window.WebSocket`, `EventSource`, `fetch`, dan `XMLHttpRequest` langsung di Android WebView tanpa server cloud luar (100% Free & Zero-Latency).
+- **Integrasi Live Bandar Detector & Broker Flow:** Auto-fetch dan parsing endpoint resmi `exodus.stockbit.com/marketdetectors/{ticker}` untuk status akumulasi/distribusi (`Big Acc`, `Acc`, `Neutral`, `Dist`, `Big Dist`), rata-rata harga modal bandar (*Average Price*), dan nilai transaksi Rupiah.
+- **Strategi Scalping "Akan Naik" (Early Momentum):** Prioritas saham dengan kenaikan awal +0.5% s/d +5.0% yang didukung volume dan konfirmasi akumulasi bandar (bonus skor +8 & gaya `Early Momentum`).
+- **Proteksi Anti-Pucuk (Anti-FOMO Hard Block):** Saham $\ge +7.0\%$ yang masih berada di pucuk harian (*High*) dilarang keras memunculkan rekomendasi `BUY/STRONG BUY` dan dikunci ke `WATCH` dengan peringatan *"Dilarang beli di pucuk — tunggu pullback ke support"*.
+- **Pengecualian Super Momentum (Ride the Wave):** Membuka kunci rekomendasi `BUY/STRONG BUY` untuk saham laju $\ge +7.0\%$ yang terkonfirmasi didorong HAKA masif dan akumulasi bandar menuju ARA, lengkap dengan Stop Loss super ketat 1-2 tik (-1.2% s/d -1.5%).
+- **Pembenahan Total Alasan Rekomendasi AI:** Mengeliminasi kontradiksi akumulasi vs distribusi, memprioritaskan alasan nomor 1 yang selaras dengan rekomendasi, menghapus alarm volume palsu di pagi hari, dan menghilangkan angka "Rp 0" pada Support/Resisten.
+- **UI & Detail Bottom Sheet:** Lencana live bandar pada kartu daftar saham (`chipBandar`) dan panel institusional baru *Bandar Detector (Live Stream)* pada lembar detail emiten.
+- **Panduan Pengujian:** Menambahkan dokumen resmi `PANDUAN_PENGUJIAN_SENIN.md` untuk skenario uji live market pembukaan bursa.
+
+---
+
+## [v1.5] - 2026-09-04
 
 ### 5-Layer Signal Filter (Anti False Strong Buy)
 Merespons false signal Strong Buy: CUAN beli 975 turun ke 930, COCO beli 134 turun ke 132.

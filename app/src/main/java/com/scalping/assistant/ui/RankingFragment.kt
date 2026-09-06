@@ -26,6 +26,7 @@ class RankingFragment : Fragment() {
         layoutEmptyState = view.findViewById(R.id.layoutEmptyState)
         
         rankingAdapter = RankingAdapter { analysis ->
+            (activity as? com.scalping.assistant.MainActivity)?.requestBandarDetector(analysis.ticker)
             val bottomSheet = DetailBottomSheet(analysis)
             bottomSheet.show(childFragmentManager, "DetailBottomSheet")
         }

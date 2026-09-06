@@ -56,6 +56,7 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
     private val technicalCache = mutableMapOf<String, TechnicalResult>()
     private val previousRecommendations = mutableMapOf<String, Recommendation>()
     private val tapeReadingMap = mutableMapOf<String, com.scalping.assistant.data.models.TapeReadingStat>()
+    private val bandarDetectorMap = mutableMapOf<String, com.scalping.assistant.data.models.BandarDetectorStat>()
 
     // ============================================================
     // State Flows untuk UI
@@ -349,6 +350,69 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
     }
 
     // ============================================================
+    // DATA PROCESSING: Bandar Detector (Official Stockbit API)
+    // ============================================================
+
+    fun processBandarDetectorJson(url: String, jsonString: String) {
+        try {
+            val regex = Regex("""marketdetectors/([A-Za-z0-9]{3,6})""", RegexOption.IGNORE_CASE)
+            val match = regex.find(url)
+            val ticker = match?.groupValues?.get(1)?.uppercase() ?: return
+
+            val root = org.json.JSONObject(jsonString)
+            val data = root.optJSONObject("data") ?: return
+            val bandarDetectorObj = data.optJSONObject("bandar_detector") ?: return
+
+            val avgPrice = bandarDetectorObj.optDouble("average", 0.0)
+            val avgObj = bandarDetectorObj.optJSONObject("avg")
+            val accdistStatus = avgObj?.optString("accdist", "Neutral") ?: "Neutral"
+            val amount = avgObj?.optLong("amount", 0L) ?: 0L
+            val vol = avgObj?.optLong("vol", 0L) ?: 0L
+
+            val stat = com.scalping.assistant.data.models.BandarDetectorStat(
+                ticker = ticker,
+                accdistStatus = accdistStatus,
+                averagePrice = avgPrice,
+                amountRupiah = amount,
+                volumeLot = vol,
+                lastUpdated = System.currentTimeMillis()
+            )
+            bandarDetectorMap[ticker] = stat
+            android.util.Log.d("BANDAR_DETECTOR", "Parsed $ticker: $accdistStatus @ Rp $avgPrice, amount: Rp $amount")
+
+            reAnalyzeTicker(ticker)
+        } catch (e: Exception) {
+            android.util.Log.e("BANDAR_DETECTOR", "Error parsing bandar detector: ${e.message}")
+        }
+    }
+
+    private fun reAnalyzeTicker(ticker: String) {
+        val manualList = _manualFlow.value.toMutableList()
+        val manualIdx = manualList.indexOfFirst { it.ticker == ticker }
+        if (manualIdx >= 0) {
+            val oldAnalysis = manualList[manualIdx]
+            val snap = historyMap[ticker]?.lastOrNull()
+            if (snap != null) {
+                val ofResult = oldAnalysis.orderFlow
+                val techResult = oldAnalysis.technical
+                val sessionInfo = MarketSession.getCurrentSession()
+                val prevRec = previousRecommendations[ticker]
+                val snapshotCount = historyMap[ticker]?.size ?: 0
+                val tapeReadingStat = tapeReadingMap[ticker]
+                val bandarStat = bandarDetectorMap[ticker]
+
+                val newAnalysis = ScoringEngine.generateAnalysis(
+                    snap, ofResult, techResult, sessionInfo, prevRec, snapshotCount, tapeReadingStat, bandarStat
+                )
+                manualList[manualIdx] = newAnalysis
+                _manualFlow.value = manualList.sortedByDescending { it.score }
+                refreshTopPicks()
+                updatePortfolioPositions(_manualFlow.value)
+            }
+        }
+    }
+
+    // ============================================================
     // DATA PROCESSING: WebView Movers (Tab Movers)
     // ============================================================
 
@@ -425,7 +489,8 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
 
                 val prevRec = previousRecommendations["movers_$ticker"]
                 val snapshotCount = historyMap["movers_$ticker"]?.size ?: 0
-                val analysis = ScoringEngine.generateAnalysis(snapshot, ofResult, techResult, sessionInfo, prevRec, snapshotCount)
+                val bandarStat = bandarDetectorMap[ticker]
+                val analysis = ScoringEngine.generateAnalysis(snapshot, ofResult, techResult, sessionInfo, prevRec, snapshotCount, null, bandarStat)
                 previousRecommendations["movers_$ticker"] = analysis.recommendation
                 analyses.add(analysis)
             }
@@ -538,8 +603,9 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
             val prevRec = previousRecommendations[historyKey]
             val snapshotCount = history.size
             val tapeReadingStat = tapeReadingMap[ticker]
+            val bandarStat = bandarDetectorMap[ticker]
 
-            val analysis = ScoringEngine.generateAnalysis(snap, ofResult, techResult, sessionInfo, prevRec, snapshotCount, tapeReadingStat)
+            val analysis = ScoringEngine.generateAnalysis(snap, ofResult, techResult, sessionInfo, prevRec, snapshotCount, tapeReadingStat, bandarStat)
             previousRecommendations[historyKey] = analysis.recommendation
             analyses.add(analysis)
 

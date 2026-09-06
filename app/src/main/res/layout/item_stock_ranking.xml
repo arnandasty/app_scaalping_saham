@@ -185,6 +185,19 @@
                 android:text="Bollinger"
                 android:textColor="@color/text_secondary"
                 android:textSize="10sp" />
+
+            <TextView
+                android:id="@+id/chipBandar"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_chip"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:text="Bandar: -"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:visibility="gone" />
         </LinearLayout>
 
         <!-- Baris 4: Ringkasan Alasan -->

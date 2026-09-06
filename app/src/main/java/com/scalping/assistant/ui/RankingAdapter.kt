@@ -49,6 +49,7 @@ class RankingAdapter(
         private val chipMACD: TextView = itemView.findViewById(R.id.chipMACD)
         private val chipSupertrend: TextView = itemView.findViewById(R.id.chipSupertrend)
         private val chipBB: TextView = itemView.findViewById(R.id.chipBB)
+        private val chipBandar: TextView = itemView.findViewById(R.id.chipBandar)
         private val tvPrimaryReason: TextView = itemView.findViewById(R.id.tvPrimaryReason)
 
         fun bind(item: StockAnalysis, rank: Int) {
@@ -122,6 +123,37 @@ class RankingAdapter(
             } else {
                 chipBB.text = "BB: Mid/Up"
                 chipBB.setTextColor(Color.parseColor("#94A3B8"))
+            }
+
+            // Bandar Detector Chip
+            val bStat = item.bandarDetector
+            if (bStat != null && bStat.accdistStatus.isNotEmpty() && bStat.accdistStatus != "Neutral") {
+                chipBandar.visibility = View.VISIBLE
+                val avgPrice = if (bStat.averagePrice > 0) " (${bStat.averagePrice.toInt()})" else ""
+                when (bStat.accdistStatus) {
+                    "Big Acc" -> {
+                        chipBandar.text = "🟢 Big Acc$avgPrice"
+                        chipBandar.setTextColor(Color.parseColor("#10B981"))
+                    }
+                    "Acc" -> {
+                        chipBandar.text = "🟢 Acc$avgPrice"
+                        chipBandar.setTextColor(Color.parseColor("#34D399"))
+                    }
+                    "Big Dist" -> {
+                        chipBandar.text = "🔴 Big Dist$avgPrice"
+                        chipBandar.setTextColor(Color.parseColor("#EF4444"))
+                    }
+                    "Dist" -> {
+                        chipBandar.text = "🔴 Dist$avgPrice"
+                        chipBandar.setTextColor(Color.parseColor("#F87171"))
+                    }
+                    else -> {
+                        chipBandar.text = "⚪ ${bStat.accdistStatus}"
+                        chipBandar.setTextColor(Color.parseColor("#94A3B8"))
+                    }
+                }
+            } else {
+                chipBandar.visibility = View.GONE
             }
 
             val reason = item.reasons.firstOrNull() ?: "Analisis Orderbook realtime."
