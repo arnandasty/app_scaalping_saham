@@ -4,7 +4,24 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 
 ---
 
-## [v2.3] - 2026-09-06 (Terkini)
+## [v2.4] - 2026-09-06 (Terkini)
+
+### 🌐 Analisis Arus Broker Asing (Multi-Day & Intraday) & Indikator Moving Average (MA 5, MA 9, MA 20)
+- **Analisis Broker Asing (Foreign Flow Engine):**
+  - **Klasifikasi Broker IDX:** Mengidentifikasi kode broker institusi asing (`BK`, `AK`, `ZP`, `CS`, `RX`, `KZ`, `YU`, `CG`, `DB`, `MS`, `ML`, `CC`, `NI`, `OD`) vs broker ritel domestik (`XC`, `PD`, `YP`, `XL`, `KK`, `GR`, `SQ`, `CP`, `HP`, `AZ`, `EP`).
+  - **Smart Money Barometer:** Mendeteksi pola `"🟢 SMART MONEY ACCUMULATION"` ketika broker asing menyerok barang dari ritel, atau sebaliknya `"🔴 SMART MONEY DISTRIBUTION"` ketika asing mengguyur barang ke ritel.
+  - **Akumulasi Multi-Day untuk Swing (1 Pekan):** Menarik data broksum resmi Stockbit periode 1 pekan (`BROKER_SUMMARY_PERIOD_ONE_WEEK`) untuk swing trader, sehingga analisis tidak hanya terbatas pada data 1 hari.
+  - **Dual Foreign Flow Storage:** Data arus asing intraday (`foreignFlow`) dan multi-day (`foreignFlowMultiDay`) berdampingan tanpa saling menimpa.
+- **Indikator Moving Average (MA 5, MA 9, MA 20, MA 50):**
+  - **Kalkulasi Intraday & Daily:** Menghitung MA 5 (momentum cepat), MA 9 (konfirmasi tren pendek), MA 20 (garis swing utama), dan MA 50 di chart harian Yahoo Finance serta orderbook intraday.
+  - **Evaluasi Susunan MA (MA Alignment):** Mendeteksi pola *Perfect Bullish Stack* (Harga > MA5 > MA9 > MA20), *Golden Cross*, serta *Bearish Stack*.
+  - **Scoring Engine Integration:** Memberikan bonus skor momentum (+6) untuk formasi Bullish MA Alignment dan penalti (-8) jika Bearish.
+- **Groq AI Prompt Injection:** Memasukkan seluruh data Foreign Flow (hari ini & 1 pekan), Smart Money flow, serta MA 5/9/20 ke dalam prompt AI untuk mode Scalping, Swing, dan Dokter Portfolio Rescue.
+- **Tampilan UI BottomSheet:** Menampilkan MA 5, MA 9, MA 20 di panel teknikal dan rincian Arus Asing (Hari Ini & 1 Pekan) serta status Smart Money di kartu Bandar Detector.
+
+---
+
+## [v2.3] - 2026-09-06
 
 ### 🩺 Dokter Portfolio Groq AI (Rescue Plan Posisi Nyangkut) & Peningkatan Broksum Stockbit
 - **Fitur Dokter Portfolio AI (Rescue Plan):** Integrasi sistem diagnosa khusus posisi floating loss/nyangkut di tab Portfolio via `PortfolioRescueBottomSheet`.

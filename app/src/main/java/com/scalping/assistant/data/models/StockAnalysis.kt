@@ -41,7 +41,9 @@ data class BandarDetectorStat(
     val volumeLot: Long = 0L,
     val topBrokers: String = "",
     val topConcentration: String = "",     // "Top 1: Acc (42%) | Top 3: Big Acc (68%) | Top 5: Big Acc (82%)"
-    val foreignFlow: String = "",           // "Asing: Big Acc (+Rp 2.1 M)"
+    val foreignFlow: String = "",           // "Asing Hari Ini: Big Acc (+Rp 2.1 M)"
+    val foreignFlowMultiDay: String = "",   // "Asing 1 Minggu: Big Acc (+Rp 14.5 M)"
+    val smartMoneySummary: String = "",     // "🟢 SMART MONEY ACCUMULATION (Asing serok barang dari ritel)"
     val lastUpdated: Long = System.currentTimeMillis()
 )
 

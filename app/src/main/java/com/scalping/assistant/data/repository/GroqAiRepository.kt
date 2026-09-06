@@ -45,9 +45,12 @@ class GroqAiRepository {
             """
                 Kamu adalah Chief Scalper & Spesialis Bandarmologi di Bursa Efek Indonesia (IDX).
                 Fokus: Intraday Scalping & Tape Reading saat market aktif.
+                Perhatikan khusus:
+                - Arus Broker Asing (Foreign Flow seperti BK, AK, ZP) vs Broker Ritel (XC, YP, PD) dan Smart Money Flow.
+                - Moving Average Intraday (MA 5, MA 9, MA 20) sebagai konfirmasi momentum cepat.
                 Berikan opini trading scalping yang sangat singkat, padat, dan langsung to-the-point (maksimal 2-3 kalimat):
-                1. Aksi bandar & letak modal rata-rata bandar (apakah harga saat ini masih murah/di bawah modal bandar, atau rawan guyuran).
-                2. Saran tindakan scalping konkret (apakah boleh HAKA, tunggu pullback ke support, atau AVOID).
+                1. Aksi bandar/asing & letak modal rata-rata bandar (apakah harga saat ini masih murah/di bawah modal bandar, atau rawan guyuran).
+                2. Saran tindakan scalping konkret (apakah boleh HAKA, tunggu pullback ke support/MA, atau AVOID).
                 Gunakan gaya bahasa trader profesional Indonesia yang lugas tanpa basa-basi formal.
             """.trimIndent()
         } else {
@@ -55,8 +58,12 @@ class GroqAiRepository {
                 Kamu adalah Senior Swing Trader & Pakar Bandarmologi di Bursa Efek Indonesia (IDX).
                 Fokus: Analisis Pasca Penutupan Pasar (End-of-Day) untuk Strategi Swing Pendek / Hold 2-7 Hari.
                 Berikan analisis yang menyeluruh, komprehensif, namun tetap padat & ringkas (dalam 3 poin terstruktur dengan bullet):
-                • 🕵️ Bandarmologi & Broksum: Evaluasi aksi akumulasi/distribusi bandar harian, perbandingan harga closing vs modal bandar (Average Price), dan potensi akumulasi diam-diam.
-                • 📊 Struktur Teknikal Harian: Posisi harga terhadap MA20 & MA50 (fase uptrend/rebound/downtrend), kondisi RSI 14 (oversold/akumulasi/overbought), dan pergerakan volume.
+                • 🕵️ Bandarmologi & Arus Asing (Multi-Day):
+                  - Evaluasi peran broker asing (seperti BK, AK, ZP, CS, RX, KZ) dalam 1 pekan terakhir: apakah akumulasi konsisten (Smart Money) atau distribusi ke broker ritel (YP, PD, XC, XL).
+                  - Perbandingan harga closing vs modal bandar (Average Price), dan potensi akumulasi diam-diam.
+                • 📊 Struktur Teknikal & Moving Average (MA 5, MA 9, MA 20, MA 50):
+                  - Evaluasi susunan MA: Apakah terjadi Bullish Stack (Harga > MA5 > MA9 > MA20), Golden Cross, atau Bearish Pressure.
+                  - Kondisi RSI 14 (oversold/area akumulasi vs overbought) dan konfirmasi volume.
                 • 💡 Keputusan & Plan Swing:
                   - Rekomendasi: [BUY SWING] / [WAIT ON DIP] / [AVOID]
                   - Area Beli Aman (Buy Range)
@@ -70,7 +77,11 @@ class GroqAiRepository {
             val b = item.bandarDetector
             val brokerText = if (b.topBrokers.isNotEmpty()) "\n- Broker Summary: ${b.topBrokers}" else ""
             val concText = if (b.topConcentration.isNotEmpty()) "\n- Konsentrasi Broker: ${b.topConcentration}" else ""
-            val foreignText = if (b.foreignFlow.isNotEmpty()) "\n- Arus Investor Asing: ${b.foreignFlow}" else ""
+            val foreignText = buildString {
+                if (b.foreignFlow.isNotEmpty()) append("\n- Arus Investor Asing (Hari Ini): ${b.foreignFlow}")
+                if (b.foreignFlowMultiDay.isNotEmpty()) append("\n- Akumulasi Asing (1 Pekan Terakhir): ${b.foreignFlowMultiDay}")
+                if (b.smartMoneySummary.isNotEmpty()) append("\n- Smart Money Flow: ${b.smartMoneySummary}")
+            }
             val diff = if (b.averagePrice > 0) ((item.lastPrice - b.averagePrice) / b.averagePrice) * 100.0 else 0.0
             val diffStr = if (diff >= 0) "+%.1f%%".format(diff) else "%.1f%%".format(diff)
             """
@@ -88,12 +99,17 @@ class GroqAiRepository {
             } else {
                 "Tape Reading: Normal"
             }
+            val maIntradayText = if (item.technical.ma5 > 0) {
+                "Moving Average: MA5 Rp ${item.technical.ma5.toInt()} | MA9 Rp ${item.technical.ma9.toInt()} | MA20 Rp ${item.technical.ma20.toInt()}"
+            } else ""
+
             """
                 Data Saham: ${item.ticker}
                 Harga Saat Ini: Rp ${item.lastPrice} (${if (item.changePercent > 0) "+" else ""}${item.changePercent}%)
                 Rekomendasi Algoritma: ${item.recommendation.label} (Skor: ${item.score}/100, Gaya: ${item.style})
                 $bandarInfo
                 $tapeInfo
+                $maIntradayText
                 Orderflow Delta: ${item.orderFlow.cumulativeDelta} lot, Fake Wall: ${item.orderFlow.hasFakeWall}, Akumulasi: ${item.orderFlow.hasAccumulation}
                 Support: Rp ${item.technical.nearestSupport.toInt()} | Resisten: Rp ${item.technical.nearestResistance.toInt()}
                 Trading Plan Scalping: Entry Rp ${item.entryPrice}, Target Rp ${item.targetPrice}, Stop Loss Rp ${item.stopLoss}
@@ -103,7 +119,8 @@ class GroqAiRepository {
                 """
                 Teknikal Daily Chart (Yahoo Finance Multi-Day):
                 - Trend: ${dailyTech.trend}
-                - MA20 Harian: Rp ${dailyTech.sma20.toInt()} | MA50 Harian: Rp ${dailyTech.sma50.toInt()}
+                - MA Alignment: ${dailyTech.maAlignment}
+                - Susunan MA: MA5 Rp ${dailyTech.sma5.toInt()} | MA9 Rp ${dailyTech.sma9.toInt()} | MA20 Rp ${dailyTech.sma20.toInt()} | MA50 Rp ${dailyTech.sma50.toInt()}
                 - RSI(14) Harian: ${String.format("%.1f", dailyTech.rsi14)} (${if (dailyTech.rsi14 < 35) "Oversold/Area Akumulasi Murah" else if (dailyTech.rsi14 > 70) "Overbought/Area Rawan Profit Taking" else "Netral"})
                 - Volume Terakhir: ${formatCurrencyShort(dailyTech.lastVolume)} lot (Rata-rata 5 Hari: ${formatCurrencyShort(dailyTech.volumeAvg5d)} lot)
                 - Range 52 Minggu: High Rp ${dailyTech.high52w.toInt()} | Low Rp ${dailyTech.low52w.toInt()}
@@ -159,7 +176,11 @@ class GroqAiRepository {
         val bandarInfo = if (bandar != null) {
             val brokerText = if (bandar.topBrokers.isNotEmpty()) "\n- Broker Summary: ${bandar.topBrokers}" else ""
             val concText = if (bandar.topConcentration.isNotEmpty()) "\n- Konsentrasi Broker: ${bandar.topConcentration}" else ""
-            val foreignText = if (bandar.foreignFlow.isNotEmpty()) "\n- Arus Investor Asing: ${bandar.foreignFlow}" else ""
+            val foreignText = buildString {
+                if (bandar.foreignFlow.isNotEmpty()) append("\n- Arus Investor Asing (Hari Ini): ${bandar.foreignFlow}")
+                if (bandar.foreignFlowMultiDay.isNotEmpty()) append("\n- Akumulasi Asing (1 Pekan Terakhir): ${bandar.foreignFlowMultiDay}")
+                if (bandar.smartMoneySummary.isNotEmpty()) append("\n- Smart Money Flow: ${bandar.smartMoneySummary}")
+            }
             val diff = if (bandar.averagePrice > 0) ((trade.currentPrice - bandar.averagePrice) / bandar.averagePrice) * 100.0 else 0.0
             val diffStr = if (diff >= 0) "+%.1f%%".format(diff) else "%.1f%%".format(diff)
             """
@@ -175,7 +196,8 @@ class GroqAiRepository {
             """
             Teknikal Harian (Daily Chart Yahoo Finance):
             - Trend: ${dailyTech.trend}
-            - MA20 Harian: Rp ${dailyTech.sma20.toInt()} | MA50 Harian: Rp ${dailyTech.sma50.toInt()}
+            - MA Alignment: ${dailyTech.maAlignment}
+            - Susunan MA: MA5 Rp ${dailyTech.sma5.toInt()} | MA9 Rp ${dailyTech.sma9.toInt()} | MA20 Rp ${dailyTech.sma20.toInt()} | MA50 Rp ${dailyTech.sma50.toInt()}
             - RSI(14) Harian: ${String.format("%.1f", dailyTech.rsi14)} (${if (dailyTech.rsi14 < 35) "Oversold/Area Akumulasi Murah" else if (dailyTech.rsi14 > 70) "Overbought/Rawan Koreksi" else "Netral"})
             - Volume Terakhir: ${formatCurrencyShort(dailyTech.lastVolume)} lot (Rata-rata 5 Hari: ${formatCurrencyShort(dailyTech.volumeAvg5d)} lot)
             - Range 52 Minggu: High Rp ${dailyTech.high52w.toInt()} | Low Rp ${dailyTech.low52w.toInt()}

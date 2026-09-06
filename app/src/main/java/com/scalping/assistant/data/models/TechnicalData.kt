@@ -15,6 +15,10 @@ data class TechnicalResult(
     val vwap: Double = 0.0,
     val mfi: Double = 0.0,
 
+    val ma5: Double = 0.0,
+    val ma9: Double = 0.0,
+    val ma20: Double = 0.0,
+
     val ema9: Double = 0.0,
     val ema21: Double = 0.0,
     val emaScore: Int = 0, // 0 - 6

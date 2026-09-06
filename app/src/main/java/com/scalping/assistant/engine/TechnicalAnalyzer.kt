@@ -34,6 +34,11 @@ object TechnicalAnalyzer {
         // === Filter Layer: Today High ===
         val todayHighVal = highs.lastOrNull() ?: priceToUse
 
+        // 0. Simple Moving Average (MA 5, MA 9, MA 20)
+        val ma5Value = if (closes.size >= 5) closes.takeLast(5).average() else closes.average()
+        val ma9Value = if (closes.size >= 9) closes.takeLast(9).average() else closes.average()
+        val ma20Value = if (closes.size >= 20) closes.takeLast(20).average() else closes.average()
+
         // 1. EMA 9 & EMA 21
         val ema9Values = calculateEMA(closes, 9)
         val ema21Values = calculateEMA(closes, 21)
@@ -150,6 +155,9 @@ object TechnicalAnalyzer {
             lastClosePrice = closes.lastOrNull() ?: currentPrice,
             vwap = vwapValue,
             mfi = mfiValue,
+            ma5 = ma5Value,
+            ma9 = ma9Value,
+            ma20 = ma20Value,
             ema9 = lastEma9,
             ema21 = lastEma21,
             emaScore = emaScore,

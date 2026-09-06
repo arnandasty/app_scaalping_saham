@@ -394,6 +394,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    fun requestMultiDayBandarDetector(ticker: String) {
+        if (::webView.isInitialized && ticker.isNotEmpty()) {
+            val js = """
+                (function() {
+                    try {
+                        fetch("https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?transaction_type=TRANSACTION_TYPE_NET&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25&period=BROKER_SUMMARY_PERIOD_ONE_WEEK", { credentials: "include" })
+                            .then(r => r.text())
+                            .then(txt => {
+                                if (window.AndroidProbe && window.AndroidProbe.onProbeCaptured) {
+                                    window.AndroidProbe.onProbeCaptured("FETCH_DATA", "https://exodus.stockbit.com/marketdetectors/" + "$ticker" + "?period=BROKER_SUMMARY_PERIOD_ONE_WEEK", txt);
+                                }
+                            }).catch(e => {});
+                    } catch(err) {}
+                })();
+            """.trimIndent()
+            runOnUiThread {
+                webView.evaluateJavascript(js, null)
+            }
+        }
+    }
+
     private fun queueBandarDetectorRequests(tickers: List<String>) {
         lifecycleScope.launch {
             for (ticker in tickers) {

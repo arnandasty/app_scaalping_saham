@@ -82,6 +82,11 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         }
         updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
 
+        (activity as? MainActivity)?.let { main ->
+            main.requestBandarDetector(item.ticker)
+            main.requestMultiDayBandarDetector(item.ticker)
+        }
+
         chipModeScalping.setOnClickListener {
             selectedGroqMode = GroqAnalysisMode.SCALPING
             updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
@@ -89,11 +94,13 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
 
         chipModeSwing.setOnClickListener {
             selectedGroqMode = GroqAnalysisMode.SWING
+            (activity as? MainActivity)?.requestMultiDayBandarDetector(item.ticker)
             updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
         }
 
         chipModeRescue.setOnClickListener {
             selectedGroqMode = GroqAnalysisMode.PORTFOLIO_RESCUE
+            (activity as? MainActivity)?.requestMultiDayBandarDetector(item.ticker)
             updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
         }
 
@@ -181,6 +188,8 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
                 append(note)
                 if (bandar.topConcentration.isNotEmpty()) append("\n📊 ${bandar.topConcentration}")
                 if (bandar.foreignFlow.isNotEmpty()) append("\n🌐 ${bandar.foreignFlow}")
+                if (bandar.foreignFlowMultiDay.isNotEmpty()) append("\n🗓️ ${bandar.foreignFlowMultiDay}")
+                if (bandar.smartMoneySummary.isNotEmpty()) append("\n⚡ ${bandar.smartMoneySummary}")
                 if (bandar.topBrokers.isNotEmpty()) append("\n💼 ${bandar.topBrokers}")
             }
             detailBandarPullbackNote.text = extraDetails
@@ -235,11 +244,15 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         val bbLowerStr = if (tech.bbLower > 0) "Rp ${formatPrice(tech.bbLower.toInt())}" else "-"
         val bbUpperStr = if (tech.bbUpper > 0) "Rp ${formatPrice(tech.bbUpper.toInt())}" else "-"
 
+        val ma5Str = if (tech.ma5 > 0) "Rp ${formatPrice(tech.ma5.toInt())}" else "-"
+        val ma9Str = if (tech.ma9 > 0) "Rp ${formatPrice(tech.ma9.toInt())}" else "-"
+        val ma20Str = if (tech.ma20 > 0) "Rp ${formatPrice(tech.ma20.toInt())}" else "-"
+
         detailSupportResistance.text = """
             S1 (Support Utama): $s1 | R1 (Resisten Utama): $r1
             S2 (Support Dinamis): $s2 | R2 (Resis Dinamis): $r2
-            VWAP: $vwapStr
-            EMA 9: $ema9Str | EMA 21: $ema21Str
+            MA 5: $ma5Str | MA 9: $ma9Str | MA 20: $ma20Str
+            VWAP: $vwapStr | EMA 9: $ema9Str | EMA 21: $ema21Str
             BB Bawah: $bbLowerStr | BB Atas: $bbUpperStr
         """.trimIndent()
 

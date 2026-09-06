@@ -83,6 +83,7 @@ class PortfolioRescueBottomSheet(
                 .show()
         }
 
+        (activity as? MainActivity)?.requestMultiDayBandarDetector(trade.ticker)
         runRescueAnalysis(tvRescueContent, layoutRescueLoading, btnRefreshRescue)
     }
 

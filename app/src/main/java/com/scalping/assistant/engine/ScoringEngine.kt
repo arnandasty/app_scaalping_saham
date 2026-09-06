@@ -309,6 +309,27 @@ object ScoringEngine {
                     isBandarBigDist = true
                 }
             }
+
+            // Faktor Arus Broker Asing & Smart Money Flow
+            if (bandarDetector.smartMoneySummary.contains("SMART MONEY ACCUMULATION") ||
+                bandarDetector.foreignFlow.contains("Big Acc") ||
+                bandarDetector.foreignFlowMultiDay.contains("Big Acc")) {
+                bandarScore += 6
+            } else if (bandarDetector.smartMoneySummary.contains("SMART MONEY DISTRIBUTION") ||
+                bandarDetector.foreignFlow.contains("Big Dist") ||
+                bandarDetector.foreignFlowMultiDay.contains("Big Dist")) {
+                bandarScore -= 8
+            }
+        }
+
+        // H. Moving Average Alignment Bonus/Penalty (MA 5, MA 9, MA 20)
+        var maBonus = 0
+        if (technical.ma5 > 0 && technical.ma9 > 0 && technical.ma20 > 0) {
+            if (currentPrice > technical.ma5 && technical.ma5 > technical.ma9 && technical.ma9 > technical.ma20) {
+                maBonus = 6 // Bullish Stack
+            } else if (currentPrice < technical.ma5 && technical.ma5 < technical.ma9 && technical.ma9 < technical.ma20) {
+                maBonus = -8 // Bearish Stack
+            }
         }
 
         // G. Confidence penalty jika snapshot masih sedikit
@@ -320,7 +341,7 @@ object ScoringEngine {
             else -> 0                   // Data sudah cukup
         }
 
-        val finalScore = (ofScore + effectiveTechScore + marketScore + tapeReadingScore + bandarScore + rrPenalty + overboughtPenalty + confidencePenalty).coerceIn(0, 100)
+        val finalScore = (ofScore + effectiveTechScore + marketScore + tapeReadingScore + bandarScore + maBonus + rrPenalty + overboughtPenalty + confidencePenalty).coerceIn(0, 100)
 
         // ============================================================
         // 5B. FILTER LAYER 1: Volume Ratio (Time-Aware)
@@ -557,12 +578,23 @@ object ScoringEngine {
             if (technical.bbScore >= 4) {
                 reasons.add("〰️ Harga berada di area pantulan Bollinger Band.")
             }
+            if (technical.ma5 > 0 && technical.ma9 > 0 && technical.ma20 > 0) {
+                if (currentPrice > technical.ma5 && technical.ma5 > technical.ma9 && technical.ma9 > technical.ma20) {
+                    reasons.add("📈 Bullish MA Alignment: Harga > MA5 > MA9 > MA20 (Super Momentum).")
+                } else if (currentPrice < technical.ma5 && technical.ma5 < technical.ma9 && technical.ma9 < technical.ma20) {
+                    warnings.add("📉 Bearish MA Alignment: Harga < MA5 < MA9 < MA20 (Tekanan Jual Kuat).")
+                }
+            }
             if (spreadTicks <= 1) {
                 reasons.add("💧 Spread tipis (1 tick), sangat likuid dan mudah keluar masuk.")
             }
         } else {
             if (!technical.isSupertrendBullish && technical.totalScore > 0) {
                 warnings.add("⚠️ Supertrend Bearish. Tren utama dalam tekanan jual.")
+            }
+            if (technical.ma5 > 0 && technical.ma9 > 0 && technical.ma20 > 0 &&
+                currentPrice < technical.ma5 && technical.ma5 < technical.ma9 && technical.ma9 < technical.ma20) {
+                warnings.add("📉 Bearish MA Alignment: Harga < MA5 < MA9 < MA20 (Downtrend Terkonfirmasi).")
             }
         }
 
@@ -574,6 +606,18 @@ object ScoringEngine {
                 isBandarAcc -> reasons.add("📈 Bandar Detector: Akumulasi Positif (${bandarDetector.accdistStatus})$avgPriceFormatted.")
                 isBandarBigDist -> warnings.add("🚨 Bandar Detector: BIG DISTRIBUTION! Bandar buang barang masif!")
                 isBandarDist -> warnings.add("⚠️ Bandar Detector: Distribusi (${bandarDetector.accdistStatus}). Waspada guyuran!")
+            }
+
+            if (bandarDetector.foreignFlow.contains("Big Acc") || bandarDetector.foreignFlowMultiDay.contains("Big Acc")) {
+                reasons.add("🌐 Broker Asing Akumulasi Masif (${bandarDetector.foreignFlow.ifEmpty { bandarDetector.foreignFlowMultiDay }})")
+            } else if (bandarDetector.foreignFlow.contains("Big Dist") || bandarDetector.foreignFlowMultiDay.contains("Big Dist")) {
+                warnings.add("⚠️ Broker Asing Distribusi Besar (${bandarDetector.foreignFlow.ifEmpty { bandarDetector.foreignFlowMultiDay }})")
+            }
+
+            if (bandarDetector.smartMoneySummary.contains("SMART MONEY ACCUMULATION")) {
+                reasons.add("⚡ Smart Money Flow: Broker Asing serok barang dari ritel!")
+            } else if (bandarDetector.smartMoneySummary.contains("SMART MONEY DISTRIBUTION")) {
+                warnings.add("🚨 Smart Money Warning: Broker Asing guyur barang ke ritel!")
             }
         }
 

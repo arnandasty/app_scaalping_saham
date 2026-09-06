@@ -11,6 +11,8 @@ import java.net.URL
 
 data class DailyTechnicalSummary(
     val lastClose: Double,
+    val sma5: Double,
+    val sma9: Double,
     val sma20: Double,
     val sma50: Double,
     val rsi14: Double,
@@ -18,7 +20,8 @@ data class DailyTechnicalSummary(
     val low52w: Double,
     val volumeAvg5d: Long,
     val lastVolume: Long,
-    val trend: String
+    val trend: String,
+    val maAlignment: String = ""
 )
 
 class YahooFinanceRepository {
@@ -125,7 +128,21 @@ class YahooFinanceRepository {
             val lastClose = closes.last()
             val lastVolume = if (volumes.isNotEmpty()) volumes.last() else 0L
 
-            // Hitung SMA 20
+            // Hitung SMA 5 (Momentum Jangka Pendek)
+            val sma5 = if (closes.size >= 5) {
+                closes.takeLast(5).average()
+            } else {
+                closes.average()
+            }
+
+            // Hitung SMA 9 (Konfirmasi Momentum)
+            val sma9 = if (closes.size >= 9) {
+                closes.takeLast(9).average()
+            } else {
+                closes.average()
+            }
+
+            // Hitung SMA 20 (Garis Tren Bulanan / Swing Utama)
             val sma20 = if (closes.size >= 20) {
                 closes.takeLast(20).average()
             } else {
@@ -137,6 +154,16 @@ class YahooFinanceRepository {
                 closes.takeLast(50).average()
             } else {
                 closes.average()
+            }
+
+            // Evaluasi Susunan Moving Average (MA Alignment)
+            val maAlignment = when {
+                lastClose > sma5 && sma5 > sma9 && sma9 > sma20 -> "🟢 PERFECT BULLISH STACK (Harga > MA5 > MA9 > MA20: Super Momentum)"
+                sma5 > sma9 && sma9 > sma20 -> "🟢 BULLISH TREND (MA5 > MA9 > MA20: Tren Naik Kuat)"
+                sma5 > sma20 && sma9 <= sma20 -> "🟡 GOLDEN CROSS MOMENTUM (MA5 Memotong MA20 ke Atas)"
+                lastClose < sma5 && sma5 < sma9 && sma9 < sma20 -> "🔴 PERFECT BEARISH STACK (Harga < MA5 < MA9 < MA20: Downtrend Kuat)"
+                sma5 < sma20 -> "🔴 BEARISH PRESSURE (MA5 di Bawah MA20: Tekanan Jual)"
+                else -> "⚪ KONSOLIDASI / MIXED (Harga Menguji Area MA)"
             }
 
             // Hitung Volume rata-rata 5 hari
@@ -158,6 +185,8 @@ class YahooFinanceRepository {
 
             val summary = DailyTechnicalSummary(
                 lastClose = lastClose,
+                sma5 = sma5,
+                sma9 = sma9,
                 sma20 = sma20,
                 sma50 = sma50,
                 rsi14 = rsi14,
@@ -165,7 +194,8 @@ class YahooFinanceRepository {
                 low52w = if (low52w > 0.0) low52w else (closes.minOrNull() ?: lastClose),
                 volumeAvg5d = volumeAvg5d,
                 lastVolume = lastVolume,
-                trend = trend
+                trend = trend,
+                maAlignment = maAlignment
             )
 
             dailyCache[cleanTicker] = Pair(now, summary)

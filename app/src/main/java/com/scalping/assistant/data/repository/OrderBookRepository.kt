@@ -368,11 +368,18 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
     // DATA PROCESSING: Bandar Detector (Official Stockbit API)
     // ============================================================
 
+    private val FOREIGN_BROKERS = setOf("BK", "AK", "ZP", "CS", "RX", "KZ", "YU", "CG", "DB", "MS", "ML", "CC", "NI", "OD")
+    private val RETAIL_BROKERS = setOf("XC", "PD", "YP", "XL", "KK", "GR", "SQ", "CP", "HP", "AZ", "EP")
+
     fun processBandarDetectorJson(url: String, jsonString: String) {
         try {
             val regex = Regex("""marketdetectors/([A-Za-z0-9]{3,6})""", RegexOption.IGNORE_CASE)
             val match = regex.find(url)
             val ticker = match?.groupValues?.get(1)?.uppercase() ?: return
+
+            val isMultiDay = url.contains("ONE_WEEK", ignoreCase = true) ||
+                    url.contains("ONE_MONTH", ignoreCase = true) ||
+                    url.contains("from=", ignoreCase = true)
 
             val root = org.json.JSONObject(jsonString)
             val data = root.optJSONObject("data") ?: return
@@ -398,30 +405,35 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
             val top5Str = formatConcentration(bandarDetectorObj.optJSONObject("top5"), "Top 5")
             val topConcentration = listOf(top1Str, top3Str, top5Str).filter { it.isNotEmpty() }.joinToString(" | ")
 
-            // 2. Ekstrak Arus Investor Asing (Foreign Flow)
-            val foreignObj = bandarDetectorObj.optJSONObject("foreign") ?: data.optJSONObject("foreign")
-            val foreignNet = foreignObj?.optLong("net_amount", 0L) ?: foreignObj?.optLong("amount", 0L) ?: 0L
-            val foreignAcc = foreignObj?.optString("accdist", "") ?: ""
-            val foreignFlowStr = if (foreignNet != 0L || foreignAcc.isNotEmpty()) {
-                val formattedAmt = formatCurrencyShort(foreignNet)
-                if (foreignAcc.isNotEmpty()) "Asing: $foreignAcc ($formattedAmt)" else "Asing: $formattedAmt"
-            } else ""
-
-            // 3. Ekstrak Top Broker Pembeli & Penjual beserta Nilai Transaksinya
+            // 2. Ekstrak Top Broker Pembeli & Penjual dan Klasifikasi Asing vs Ritel
             var topBrokersSummary = ""
+            var foreignBuySum = 0L
+            var foreignSellSum = 0L
+            var retailBuySum = 0L
+            var retailSellSum = 0L
+
             val brokersArr = data.optJSONArray("brokers")
             if (brokersArr != null && brokersArr.length() > 0) {
                 val buyers = mutableListOf<String>()
                 val sellers = mutableListOf<String>()
-                for (i in 0 until minOf(brokersArr.length(), 20)) {
+                for (i in 0 until brokersArr.length()) {
                     val b = brokersArr.optJSONObject(i) ?: continue
                     val code = b.optString("broker_code", "").uppercase()
-                    val netVal = b.optDouble("net_value", 0.0)
+                    val netVal = b.optDouble("net_value", 0.0).toLong()
+
                     if (code.isNotEmpty()) {
-                        if (netVal > 0) {
-                            buyers.add("$code (+${formatCurrencyShort(netVal.toLong())})")
-                        } else if (netVal < 0) {
-                            sellers.add("$code (${formatCurrencyShort(netVal.toLong())})")
+                        if (code in FOREIGN_BROKERS) {
+                            if (netVal > 0) foreignBuySum += netVal else foreignSellSum += kotlin.math.abs(netVal)
+                        } else if (code in RETAIL_BROKERS) {
+                            if (netVal > 0) retailBuySum += netVal else retailSellSum += kotlin.math.abs(netVal)
+                        }
+
+                        if (i < 20) {
+                            if (netVal > 0) {
+                                buyers.add("$code (+${formatCurrencyShort(netVal)})")
+                            } else if (netVal < 0) {
+                                sellers.add("$code (${formatCurrencyShort(netVal)})")
+                            }
                         }
                     }
                 }
@@ -430,19 +442,64 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
                 topBrokersSummary = listOf(buyStr, sellStr).filter { it.isNotEmpty() }.joinToString(" | ")
             }
 
-            val stat = com.scalping.assistant.data.models.BandarDetectorStat(
-                ticker = ticker,
-                accdistStatus = accdistStatus,
-                averagePrice = avgPrice,
-                amountRupiah = amount,
-                volumeLot = vol,
-                topBrokers = topBrokersSummary,
-                topConcentration = topConcentration,
-                foreignFlow = foreignFlowStr,
-                lastUpdated = System.currentTimeMillis()
-            )
+            // 3. Ekstrak Arus Investor Asing (Foreign Flow) Resmi Stockbit
+            val foreignObj = bandarDetectorObj.optJSONObject("foreign") ?: data.optJSONObject("foreign")
+            val foreignNet = when {
+                foreignObj != null && foreignObj.has("net_amount") -> foreignObj.optLong("net_amount", 0L)
+                foreignObj != null && foreignObj.has("amount") -> foreignObj.optLong("amount", 0L)
+                else -> foreignBuySum - foreignSellSum
+            }
+            val foreignAcc = foreignObj?.optString("accdist", "") ?: ""
+            val formattedForeignNet = (if (foreignNet > 0) "+" else "") + formatCurrencyShort(foreignNet)
+
+            val periodLabel = if (isMultiDay) "Asing 1 Pekan" else "Asing Hari Ini"
+            val foreignFlowStr = if (foreignNet != 0L || foreignAcc.isNotEmpty()) {
+                if (foreignAcc.isNotEmpty()) "$periodLabel: $foreignAcc ($formattedForeignNet)" else "$periodLabel: $formattedForeignNet"
+            } else ""
+
+            // 4. Smart Money Flow Summary (Komparasi Asing Institusi vs Ritel Domestik)
+            val smartMoney = when {
+                foreignNet > 300_000_000L && retailSellSum > retailBuySum ->
+                    "🟢 SMART MONEY ACCUMULATION (Asing serok barang dari ritel: $formattedForeignNet)"
+                foreignNet < -300_000_000L && retailBuySum > retailSellSum ->
+                    "🔴 SMART MONEY DISTRIBUTION (Asing guyur barang ke ritel: $formattedForeignNet)"
+                foreignNet > 0L && retailBuySum > retailSellSum ->
+                    "🟡 ASING & RITEL SAMA-SAMA BELI (Asing $formattedForeignNet, Ritel ikut akumulasi)"
+                foreignNet < 0L && retailSellSum > retailBuySum ->
+                    "⚠️ DUA PIHAK JUALAN (Asing $formattedForeignNet & Ritel distribusi bersamaan)"
+                foreignNet > 0L ->
+                    "🟢 ASING NET ACCUMULATION ($formattedForeignNet)"
+                foreignNet < 0L ->
+                    "🔴 ASING NET DISTRIBUTION ($formattedForeignNet)"
+                else -> "⚪ ALIRAN ASING & RITEL SEIMBANG"
+            }
+
+            val existing = bandarDetectorMap[ticker]
+
+            val stat = if (isMultiDay) {
+                (existing ?: com.scalping.assistant.data.models.BandarDetectorStat(ticker = ticker)).copy(
+                    foreignFlowMultiDay = foreignFlowStr,
+                    smartMoneySummary = if (existing?.smartMoneySummary.isNullOrEmpty()) smartMoney else existing?.smartMoneySummary ?: smartMoney,
+                    lastUpdated = System.currentTimeMillis()
+                )
+            } else {
+                com.scalping.assistant.data.models.BandarDetectorStat(
+                    ticker = ticker,
+                    accdistStatus = accdistStatus,
+                    averagePrice = avgPrice,
+                    amountRupiah = amount,
+                    volumeLot = vol,
+                    topBrokers = topBrokersSummary,
+                    topConcentration = topConcentration,
+                    foreignFlow = foreignFlowStr,
+                    foreignFlowMultiDay = existing?.foreignFlowMultiDay ?: "",
+                    smartMoneySummary = smartMoney,
+                    lastUpdated = System.currentTimeMillis()
+                )
+            }
+
             bandarDetectorMap[ticker] = stat
-            android.util.Log.d("BANDAR_DETECTOR", "Parsed $ticker: $accdistStatus @ Rp $avgPrice, amount: Rp $amount, $topConcentration, $foreignFlowStr")
+            android.util.Log.d("BANDAR_DETECTOR", "Parsed $ticker (multiDay=$isMultiDay): $accdistStatus @ Rp $avgPrice, foreign: $foreignFlowStr, smartMoney: $smartMoney")
 
             reAnalyzeTicker(ticker)
         } catch (e: Exception) {
