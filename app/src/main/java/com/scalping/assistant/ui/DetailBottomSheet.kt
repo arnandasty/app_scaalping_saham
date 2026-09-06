@@ -177,7 +177,13 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
                 bandar.averagePrice > 0 && item.lastPrice > bandar.averagePrice -> "ℹ️ Harga saat ini $diffStr di atas avg bandar (Rp ${formatPrice(bandar.averagePrice.toInt())}). Pastikan ada bantalan support jika ingin masuk."
                 else -> "Status arus akumulasi bandar: $statusClean"
             }
-            detailBandarPullbackNote.text = note
+            val extraDetails = buildString {
+                append(note)
+                if (bandar.topConcentration.isNotEmpty()) append("\n📊 ${bandar.topConcentration}")
+                if (bandar.foreignFlow.isNotEmpty()) append("\n🌐 ${bandar.foreignFlow}")
+                if (bandar.topBrokers.isNotEmpty()) append("\n💼 ${bandar.topBrokers}")
+            }
+            detailBandarPullbackNote.text = extraDetails
             detailBandarPullbackNote.setTextColor(if (statusClean.contains("Dist")) Color.parseColor("#EF4444") else Color.parseColor("#38BDF8"))
         } else {
             detailBandarStatus.text = "Menunggu Stream"

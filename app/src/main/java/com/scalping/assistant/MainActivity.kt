@@ -394,6 +394,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun queueBandarDetectorRequests(tickers: List<String>) {
+        lifecycleScope.launch {
+            for (ticker in tickers) {
+                requestBandarDetector(ticker)
+                kotlinx.coroutines.delay(180L)
+            }
+        }
+    }
+
     // ============================================================
     // WEBVIEW SETUP
     // ============================================================
@@ -469,17 +478,20 @@ class MainActivity : AppCompatActivity() {
                 try {
                     val arr = org.json.JSONArray(jsonArray)
                     val tickers = mutableListOf<String>()
-                    for (i in 0 until Math.min(arr.length(), 6)) { // Ambil 6 teratas agar rotasi cukup cepat (18 detik/cycle)
+                    val maxTickers = Math.min(arr.length(), 35) // Ambil hingga 35 emiten teraktif
+                    for (i in 0 until maxTickers) {
                         val obj = arr.getJSONObject(i)
                         val t = obj.getString("ticker").trim().uppercase()
-                        tickers.add(t)
-                        requestBandarDetector(t)
+                        if (t.isNotEmpty() && !tickers.contains(t)) {
+                            tickers.add(t)
+                        }
                     }
                     if (tickers.isNotEmpty()) {
                         moversTickers = tickers
                         lifecycleScope.launch {
                             orderBookRepo.processMoversTickerData(jsonArray)
                         }
+                        queueBandarDetectorRequests(tickers)
                     }
                 } catch (e: Exception) { }
             }

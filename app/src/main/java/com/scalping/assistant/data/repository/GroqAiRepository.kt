@@ -67,8 +67,17 @@ class GroqAiRepository {
         }
 
         val bandarInfo = if (item.bandarDetector != null) {
-            val brokerText = if (item.bandarDetector.topBrokers.isNotEmpty()) " (${item.bandarDetector.topBrokers})" else ""
-            "Bandar Detector: ${item.bandarDetector.accdistStatus} @ Rp ${item.bandarDetector.averagePrice.toInt()} (Total Nilai: ${formatCurrencyShort(item.bandarDetector.amountRupiah)})$brokerText"
+            val b = item.bandarDetector
+            val brokerText = if (b.topBrokers.isNotEmpty()) "\n- Broker Summary: ${b.topBrokers}" else ""
+            val concText = if (b.topConcentration.isNotEmpty()) "\n- Konsentrasi Broker: ${b.topConcentration}" else ""
+            val foreignText = if (b.foreignFlow.isNotEmpty()) "\n- Arus Investor Asing: ${b.foreignFlow}" else ""
+            val diff = if (b.averagePrice > 0) ((item.lastPrice - b.averagePrice) / b.averagePrice) * 100.0 else 0.0
+            val diffStr = if (diff >= 0) "+%.1f%%".format(diff) else "%.1f%%".format(diff)
+            """
+            Akumulasi & Broker Flow (Stockbit Data):
+            - Status: ${b.accdistStatus} (Total Nilai: ${formatCurrencyShort(b.amountRupiah)})
+            - Avg Price Bandar: Rp ${b.averagePrice.toInt()} (Harga saat ini $diffStr vs modal bandar)$concText$foreignText$brokerText
+            """.trimIndent()
         } else {
             "Bandar Detector: Menunggu data bursa"
         }
@@ -148,8 +157,16 @@ class GroqAiRepository {
 
         val bandar = bandarDetector ?: item?.bandarDetector
         val bandarInfo = if (bandar != null) {
-            val brokerText = if (bandar.topBrokers.isNotEmpty()) " (${bandar.topBrokers})" else ""
-            "Bandar Detector: ${bandar.accdistStatus} @ Rp ${bandar.averagePrice.toInt()} (Total Nilai: ${formatCurrencyShort(bandar.amountRupiah)})$brokerText"
+            val brokerText = if (bandar.topBrokers.isNotEmpty()) "\n- Broker Summary: ${bandar.topBrokers}" else ""
+            val concText = if (bandar.topConcentration.isNotEmpty()) "\n- Konsentrasi Broker: ${bandar.topConcentration}" else ""
+            val foreignText = if (bandar.foreignFlow.isNotEmpty()) "\n- Arus Investor Asing: ${bandar.foreignFlow}" else ""
+            val diff = if (bandar.averagePrice > 0) ((trade.currentPrice - bandar.averagePrice) / bandar.averagePrice) * 100.0 else 0.0
+            val diffStr = if (diff >= 0) "+%.1f%%".format(diff) else "%.1f%%".format(diff)
+            """
+            Akumulasi & Broker Flow (Stockbit Data):
+            - Status: ${bandar.accdistStatus} (Total Nilai: ${formatCurrencyShort(bandar.amountRupiah)})
+            - Avg Price Bandar: Rp ${bandar.averagePrice.toInt()} (Harga pasar saat ini $diffStr dari avg bandar)$concText$foreignText$brokerText
+            """.trimIndent()
         } else {
             "Bandar Detector: Menunggu data bursa"
         }

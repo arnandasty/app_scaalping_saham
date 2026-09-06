@@ -11,6 +11,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.Dispatchers
 import com.scalping.assistant.data.models.Recommendation
 import org.json.JSONArray
 import java.util.UUID
@@ -380,18 +384,45 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
             val amount = avgObj?.optLong("amount", 0L) ?: 0L
             val vol = avgObj?.optLong("vol", 0L) ?: 0L
 
+            // 1. Ekstrak Konsentrasi Bandar (Top 1, Top 3, Top 5)
+            fun formatConcentration(obj: org.json.JSONObject?, label: String): String {
+                if (obj == null) return ""
+                val acc = obj.optString("accdist", "")
+                val pct = obj.optDouble("percent", 0.0)
+                if (acc.isEmpty() && pct == 0.0) return ""
+                val pctStr = if (pct > 0.0) " (%.1f%%)".format(pct) else ""
+                return "$label: $acc$pctStr"
+            }
+            val top1Str = formatConcentration(bandarDetectorObj.optJSONObject("top1"), "Top 1")
+            val top3Str = formatConcentration(bandarDetectorObj.optJSONObject("top3"), "Top 3")
+            val top5Str = formatConcentration(bandarDetectorObj.optJSONObject("top5"), "Top 5")
+            val topConcentration = listOf(top1Str, top3Str, top5Str).filter { it.isNotEmpty() }.joinToString(" | ")
+
+            // 2. Ekstrak Arus Investor Asing (Foreign Flow)
+            val foreignObj = bandarDetectorObj.optJSONObject("foreign") ?: data.optJSONObject("foreign")
+            val foreignNet = foreignObj?.optLong("net_amount", 0L) ?: foreignObj?.optLong("amount", 0L) ?: 0L
+            val foreignAcc = foreignObj?.optString("accdist", "") ?: ""
+            val foreignFlowStr = if (foreignNet != 0L || foreignAcc.isNotEmpty()) {
+                val formattedAmt = formatCurrencyShort(foreignNet)
+                if (foreignAcc.isNotEmpty()) "Asing: $foreignAcc ($formattedAmt)" else "Asing: $formattedAmt"
+            } else ""
+
+            // 3. Ekstrak Top Broker Pembeli & Penjual beserta Nilai Transaksinya
             var topBrokersSummary = ""
             val brokersArr = data.optJSONArray("brokers")
             if (brokersArr != null && brokersArr.length() > 0) {
                 val buyers = mutableListOf<String>()
                 val sellers = mutableListOf<String>()
-                for (i in 0 until minOf(brokersArr.length(), 15)) {
+                for (i in 0 until minOf(brokersArr.length(), 20)) {
                     val b = brokersArr.optJSONObject(i) ?: continue
-                    val code = b.optString("broker_code", "")
+                    val code = b.optString("broker_code", "").uppercase()
                     val netVal = b.optDouble("net_value", 0.0)
                     if (code.isNotEmpty()) {
-                        if (netVal > 0) buyers.add(code)
-                        else if (netVal < 0) sellers.add(code)
+                        if (netVal > 0) {
+                            buyers.add("$code (+${formatCurrencyShort(netVal.toLong())})")
+                        } else if (netVal < 0) {
+                            sellers.add("$code (${formatCurrencyShort(netVal.toLong())})")
+                        }
                     }
                 }
                 val buyStr = if (buyers.isNotEmpty()) "Top Buyer: ${buyers.take(4).joinToString(", ")}" else ""
@@ -406,14 +437,28 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
                 amountRupiah = amount,
                 volumeLot = vol,
                 topBrokers = topBrokersSummary,
+                topConcentration = topConcentration,
+                foreignFlow = foreignFlowStr,
                 lastUpdated = System.currentTimeMillis()
             )
             bandarDetectorMap[ticker] = stat
-            android.util.Log.d("BANDAR_DETECTOR", "Parsed $ticker: $accdistStatus @ Rp $avgPrice, amount: Rp $amount")
+            android.util.Log.d("BANDAR_DETECTOR", "Parsed $ticker: $accdistStatus @ Rp $avgPrice, amount: Rp $amount, $topConcentration, $foreignFlowStr")
 
             reAnalyzeTicker(ticker)
         } catch (e: Exception) {
             android.util.Log.e("BANDAR_DETECTOR", "Error parsing bandar detector: ${e.message}")
+        }
+    }
+
+    private fun formatCurrencyShort(amount: Long): String {
+        val absVal = kotlin.math.abs(amount).toDouble()
+        val sign = if (amount < 0) "-" else ""
+        return when {
+            absVal >= 1_000_000_000_000.0 -> "${sign}Rp %.1f T".format(absVal / 1_000_000_000_000.0)
+            absVal >= 1_000_000_000.0 -> "${sign}Rp %.1f M".format(absVal / 1_000_000_000.0)
+            absVal >= 1_000_000.0 -> "${sign}Rp %.1f Jt".format(absVal / 1_000_000.0)
+            absVal > 0 -> "${sign}Rp ${String.format("%,d", absVal.toInt()).replace(',', '.')}"
+            else -> "Rp 0"
         }
     }
 
@@ -440,6 +485,38 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
                 refreshTopPicks()
                 updatePortfolioPositions(_manualFlow.value)
             }
+        }
+
+        // Sinkronkan juga pembaharuan data bandar ke Tab Movers
+        val moversList = _moversFlow.value.toMutableList()
+        val moversIdx = moversList.indexOfFirst { it.ticker == ticker }
+        if (moversIdx >= 0) {
+            val oldAnalysis = moversList[moversIdx]
+            val snap = historyMap["movers_$ticker"]?.lastOrNull() ?: OrderBookSnapshot(
+                ticker = ticker,
+                lastPrice = oldAnalysis.lastPrice,
+                changePercent = oldAnalysis.changePercent,
+                timestamp = System.currentTimeMillis(),
+                bidLevels = emptyList(),
+                offerLevels = emptyList(),
+                totalBidLot = 0L,
+                totalOfferLot = 0L
+            )
+            val ofResult = oldAnalysis.orderFlow
+            val techResult = oldAnalysis.technical
+            val sessionInfo = MarketSession.getCurrentSession()
+            val prevRec = previousRecommendations["movers_$ticker"]
+            val snapshotCount = historyMap["movers_$ticker"]?.size ?: 0
+            val tapeReadingStat = tapeReadingMap[ticker]
+            val bandarStat = bandarDetectorMap[ticker]
+
+            val newAnalysis = ScoringEngine.generateAnalysis(
+                snap, ofResult, techResult, sessionInfo, prevRec, snapshotCount, tapeReadingStat, bandarStat
+            )
+            moversList[moversIdx] = newAnalysis
+            _moversFlow.value = moversList.sortedByDescending { it.score }
+            refreshTopPicks()
+            updatePortfolioPositions(_moversFlow.value)
         }
     }
 
@@ -489,41 +566,59 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
             if (jsonArray.length() == 0) return
 
             val sessionInfo = MarketSession.getCurrentSession()
-            val analyses = mutableListOf<StockAnalysis>()
+            val analyses = coroutineScope {
+                (0 until jsonArray.length()).map { i ->
+                    async(Dispatchers.Default) {
+                        try {
+                            val obj = jsonArray.getJSONObject(i)
+                            val ticker = obj.getString("ticker").trim().uppercase()
+                            val lastPrice = obj.optInt("lastPrice", 0)
+                            val changePercent = obj.optDouble("changePercent", 0.0)
+                            val turnover = obj.optString("turnover", "")
+                            val priceToUse = if (lastPrice > 0) lastPrice else 100
 
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val ticker = obj.getString("ticker").trim().uppercase()
-                val lastPrice = obj.optInt("lastPrice", 0)
-                val changePercent = obj.optDouble("changePercent", 0.0)
-                val priceToUse = if (lastPrice > 0) lastPrice else 100
+                            val existingSnap = historyMap["movers_$ticker"]?.lastOrNull() ?: historyMap[ticker]?.lastOrNull()
+                            val snapshot = if (existingSnap != null && existingSnap.bidLevels.isNotEmpty()) {
+                                existingSnap.copy(lastPrice = priceToUse, changePercent = changePercent)
+                            } else {
+                                OrderBookSnapshot(
+                                    ticker = ticker,
+                                    lastPrice = priceToUse,
+                                    changePercent = changePercent,
+                                    timestamp = System.currentTimeMillis(),
+                                    bidLevels = emptyList(),
+                                    offerLevels = emptyList(),
+                                    totalBidLot = 0L,
+                                    totalOfferLot = 0L
+                                )
+                            }
 
-                val snapshot = OrderBookSnapshot(
-                    ticker = ticker,
-                    lastPrice = priceToUse,
-                    changePercent = changePercent,
-                    timestamp = System.currentTimeMillis(),
-                    bidLevels = emptyList(),
-                    offerLevels = emptyList(),
-                    totalBidLot = 0L,
-                    totalOfferLot = 0L
-                )
+                            val candles = yahooRepo.fetchIntradayCandles(ticker)
+                            val techResult = TechnicalAnalyzer.analyze(ticker, candles, priceToUse.toDouble())
 
-                val candles = yahooRepo.fetchIntradayCandles(ticker)
-                val techResult = TechnicalAnalyzer.analyze(ticker, candles, priceToUse.toDouble())
+                            val ofDetails = mutableListOf<String>()
+                            if (turnover.isNotEmpty()) {
+                                ofDetails.add("🔥 Turnover Pasar: $turnover")
+                            } else {
+                                ofDetails.add("📊 Data Movers teraktif Stockbit")
+                            }
+                            val ofResult = com.scalping.assistant.data.models.OrderFlowResult(
+                                ticker = ticker,
+                                totalScore = 12,
+                                details = ofDetails
+                            )
 
-                val ofResult = com.scalping.assistant.data.models.OrderFlowResult(
-                    ticker = ticker,
-                    totalScore = 12,
-                    details = listOf("📊 Data Movers (teknikal saja). Orderbook aktif saat market buka.")
-                )
-
-                val prevRec = previousRecommendations["movers_$ticker"]
-                val snapshotCount = historyMap["movers_$ticker"]?.size ?: 0
-                val bandarStat = bandarDetectorMap[ticker]
-                val analysis = ScoringEngine.generateAnalysis(snapshot, ofResult, techResult, sessionInfo, prevRec, snapshotCount, null, bandarStat)
-                previousRecommendations["movers_$ticker"] = analysis.recommendation
-                analyses.add(analysis)
+                            val prevRec = previousRecommendations["movers_$ticker"]
+                            val snapshotCount = historyMap["movers_$ticker"]?.size ?: 0
+                            val bandarStat = bandarDetectorMap[ticker]
+                            val analysis = ScoringEngine.generateAnalysis(snapshot, ofResult, techResult, sessionInfo, prevRec, snapshotCount, null, bandarStat)
+                            previousRecommendations["movers_$ticker"] = analysis.recommendation
+                            analysis
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                }.awaitAll().filterNotNull()
             }
 
             if (analyses.isNotEmpty()) {

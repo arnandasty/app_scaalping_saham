@@ -40,6 +40,8 @@ data class BandarDetectorStat(
     val amountRupiah: Long = 0L,
     val volumeLot: Long = 0L,
     val topBrokers: String = "",
+    val topConcentration: String = "",     // "Top 1: Acc (42%) | Top 3: Big Acc (68%) | Top 5: Big Acc (82%)"
+    val foreignFlow: String = "",           // "Asing: Big Acc (+Rp 2.1 M)"
     val lastUpdated: Long = System.currentTimeMillis()
 )
 

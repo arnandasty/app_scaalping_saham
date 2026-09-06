@@ -30,6 +30,12 @@
             var container = document.querySelector('#widget-container');
             var scope = container || document;
 
+            // Scroll kontainer secara berkala agar row lazy-loaded ikut ter-render
+            var scrollElem = container || document.querySelector('#widget-container') || document.querySelector('[class*="widget-container"]') || document.querySelector('tbody');
+            if (scrollElem && scrollElem.scrollTop < 300) {
+                scrollElem.scrollTop = 500;
+            }
+
             var logoImgs = scope.querySelectorAll('img[src*="/logos/companies/"]');
             logoImgs.forEach(function(img) {
                 // Ambil ticker dari alt attribute (selalu berisi nama ticker)
@@ -41,30 +47,33 @@
 
                 var price = 0;
                 var changePct = 0;
+                var turnoverStr = "";
 
-                // Cari data harga dari elemen saudara di baris yang sama
-                // Struktur tabel Stockbit Movers biasanya: <td> berisi img + ticker, lalu kolom harga, change, dll.
+                // Cari data harga & turnover dari elemen saudara di baris yang sama
                 var row = img.closest('tr');
                 if (row) {
                     var tds = row.querySelectorAll('td');
                     if (tds.length >= 2) {
-                        // Iterasi dari td indeks 1 (mengabaikan kolom ticker di td 0)
                         for (var c = 1; c < tds.length; c++) {
                             var cellText = tds[c].innerText || '';
                             
+                            // Ambil turnover / value (misal: 45.2B, 12.8M, 950K)
+                            var valMatch = cellText.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
+                            if (valMatch && !turnoverStr) {
+                                turnoverStr = valMatch[0];
+                            }
+
                             // Split by whitespace untuk menangani sel yang berisi harga \n persentase
                             var tokens = cellText.split(/\s+/);
                             for (var k = 0; k < tokens.length; k++) {
                                 var t = tokens[k];
-                                var clean = t.replace(/[.,]/g, ''); // Hapus titik dan koma ribuan
+                                var clean = t.replace(/[.,]/g, '');
                                 var val = parseInt(clean, 10);
-                                // Hanya ambil angka murni tanpa huruf, %, atau +
                                 if (!isNaN(val) && val >= 50 && val <= 99000 && !/[a-zA-Z%+]/.test(t) && price === 0) {
                                     price = val;
                                 }
                             }
                             
-                            // Cari persentase di kolom mana pun
                             var pctMatch = cellText.match(/([+-]?\d+[.,]\d+)%/);
                             if (pctMatch && changePct === 0) {
                                 changePct = parseFloat(pctMatch[1].replace(',', '.'));
@@ -78,7 +87,10 @@
                     row = img.closest('[class*="row"]') || img.parentElement;
                     if (row) {
                         var rowText = row.innerText || '';
-                        // Cari angka tepat sebelum persentase, atau iterasi dengan aman
+                        var valMatchFallback = rowText.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
+                        if (valMatchFallback && !turnoverStr) {
+                            turnoverStr = valMatchFallback[0];
+                        }
                         var tokens = rowText.split(/\s+/);
                         for (var i = 0; i < tokens.length; i++) {
                             var t = tokens[i];
@@ -98,29 +110,31 @@
                 results.push({
                     ticker: ticker,
                     lastPrice: price,
-                    changePercent: changePct
+                    changePercent: changePct,
+                    turnover: turnoverStr
                 });
             });
 
             // === FALLBACK: Cari dari link /symbol/ jika logo tidak ditemukan ===
-            if (results.length < 2) {
+            if (results.length < 5) {
                 var links = scope.querySelectorAll('a[href*="/symbol/"]');
                 links.forEach(function(link) {
                     var href = link.getAttribute('href') || '';
                     var m = href.match(/\/symbol\/([A-Z]{2,5})/);
                     if (m && !seen[m[1]]) {
                         seen[m[1]] = true;
-                        results.push({ ticker: m[1], lastPrice: 0, changePercent: 0 });
+                        results.push({ ticker: m[1], lastPrice: 0, changePercent: 0, turnover: "" });
                     }
                 });
             }
 
-            var topResults = results.slice(0, 15);
+            // Ambil hingga 35 emiten teratas agar pilihan pasar jauh lebih komprehensif
+            var topResults = results.slice(0, 35);
 
             // Debug info
             if (window.Android && window.Android.onMoversDebug) {
                 window.Android.onMoversDebug(
-                    'Found ' + topResults.length + ' tickers via logos. ' +
+                    'Found ' + topResults.length + ' movers tickers. ' +
                     'Container: ' + (container ? 'YES' : 'NO (global)') + '. ' +
                     'URL: ' + window.location.pathname
                 );
