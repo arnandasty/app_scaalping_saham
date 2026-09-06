@@ -683,6 +683,12 @@ class MainActivity : AppCompatActivity() {
             val pnl = String.format("%+.2f", trade.pnlPercent).replace(',', '.')
             Toast.makeText(this, "🛑 Cut Loss ${trade.ticker}: $pnl%. Posisi ditutup.", Toast.LENGTH_LONG).show()
         }
+        pagerAdapter.portfolioFragment.onAiConsult = { trade ->
+            val analysis = orderBookRepo.getAnalysisForTicker(trade.ticker)
+            val bandar = orderBookRepo.getBandarDetector(trade.ticker)
+            val sheet = com.scalping.assistant.ui.PortfolioRescueBottomSheet(trade, analysis, bandar)
+            sheet.show(supportFragmentManager, "PortfolioRescueBottomSheet")
+        }
 
         com.google.android.material.tabs.TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {

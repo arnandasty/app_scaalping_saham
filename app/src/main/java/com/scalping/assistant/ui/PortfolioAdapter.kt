@@ -15,7 +15,8 @@ import com.scalping.assistant.data.repository.PortfolioTrade
 
 class PortfolioAdapter(
     private val onTakeProfit: (PortfolioTrade) -> Unit,
-    private val onCutLoss: (PortfolioTrade) -> Unit
+    private val onCutLoss: (PortfolioTrade) -> Unit,
+    private val onAiConsult: (PortfolioTrade) -> Unit
 ) : RecyclerView.Adapter<PortfolioAdapter.ViewHolder>() {
 
     private val items = mutableListOf<PortfolioTrade>()
@@ -49,6 +50,7 @@ class PortfolioAdapter(
         private val tvPortfolioTargetPercent: TextView = itemView.findViewById(R.id.tvPortfolioTargetPercent)
         private val tvPortfolioSL: TextView = itemView.findViewById(R.id.tvPortfolioSL)
         private val tvPortfolioRecommendation: TextView = itemView.findViewById(R.id.tvPortfolioRecommendation)
+        private val btnPortfolioAiConsult: Button = itemView.findViewById(R.id.btnPortfolioAiConsult)
         private val btnPortfolioTP: Button = itemView.findViewById(R.id.btnPortfolioTP)
         private val btnPortfolioCL: Button = itemView.findViewById(R.id.btnPortfolioCL)
         private val cardPortfolio: CardView = itemView.findViewById(R.id.cardPortfolio)
@@ -103,6 +105,9 @@ class PortfolioAdapter(
                 tvPortfolioAiReason.visibility = View.VISIBLE
                 tvPortfolioAiReason.text = trade.aiReason
 
+                btnPortfolioAiConsult.visibility = View.VISIBLE
+                btnPortfolioAiConsult.setOnClickListener { onAiConsult(trade) }
+
                 btnPortfolioTP.visibility = View.VISIBLE
                 btnPortfolioCL.visibility = View.VISIBLE
                 
@@ -133,6 +138,7 @@ class PortfolioAdapter(
             } else {
                 tvPortfolioRecommendation.visibility = View.GONE
                 tvPortfolioAiReason.visibility = View.GONE
+                btnPortfolioAiConsult.visibility = View.GONE
                 btnPortfolioTP.visibility = View.GONE
                 btnPortfolioCL.visibility = View.GONE
                 

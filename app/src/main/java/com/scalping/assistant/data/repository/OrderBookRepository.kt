@@ -92,6 +92,17 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
             }
         }
 
+    fun getAnalysisForTicker(ticker: String): StockAnalysis? {
+        val clean = ticker.trim().uppercase()
+        return _manualFlow.value.find { it.ticker == clean }
+            ?: _moversFlow.value.find { it.ticker == clean }
+            ?: _topPicksFlow.value.find { it.ticker == clean }
+    }
+
+    fun getBandarDetector(ticker: String): com.scalping.assistant.data.models.BandarDetectorStat? {
+        return bandarDetectorMap[ticker.trim().uppercase()]
+    }
+
     // ============================================================
     // PORTFOLIO MANAGEMENT
     // ============================================================
@@ -369,12 +380,32 @@ class OrderBookRepository(private val yahooRepo: YahooFinanceRepository) {
             val amount = avgObj?.optLong("amount", 0L) ?: 0L
             val vol = avgObj?.optLong("vol", 0L) ?: 0L
 
+            var topBrokersSummary = ""
+            val brokersArr = data.optJSONArray("brokers")
+            if (brokersArr != null && brokersArr.length() > 0) {
+                val buyers = mutableListOf<String>()
+                val sellers = mutableListOf<String>()
+                for (i in 0 until minOf(brokersArr.length(), 15)) {
+                    val b = brokersArr.optJSONObject(i) ?: continue
+                    val code = b.optString("broker_code", "")
+                    val netVal = b.optDouble("net_value", 0.0)
+                    if (code.isNotEmpty()) {
+                        if (netVal > 0) buyers.add(code)
+                        else if (netVal < 0) sellers.add(code)
+                    }
+                }
+                val buyStr = if (buyers.isNotEmpty()) "Top Buyer: ${buyers.take(4).joinToString(", ")}" else ""
+                val sellStr = if (sellers.isNotEmpty()) "Top Seller: ${sellers.take(4).joinToString(", ")}" else ""
+                topBrokersSummary = listOf(buyStr, sellStr).filter { it.isNotEmpty() }.joinToString(" | ")
+            }
+
             val stat = com.scalping.assistant.data.models.BandarDetectorStat(
                 ticker = ticker,
                 accdistStatus = accdistStatus,
                 averagePrice = avgPrice,
                 amountRupiah = amount,
                 volumeLot = vol,
+                topBrokers = topBrokersSummary,
                 lastUpdated = System.currentTimeMillis()
             )
             bandarDetectorMap[ticker] = stat

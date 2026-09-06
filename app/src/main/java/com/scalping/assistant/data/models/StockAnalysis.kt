@@ -39,6 +39,7 @@ data class BandarDetectorStat(
     val averagePrice: Double = 0.0,
     val amountRupiah: Long = 0L,
     val volumeLot: Long = 0L,
+    val topBrokers: String = "",
     val lastUpdated: Long = System.currentTimeMillis()
 )
 

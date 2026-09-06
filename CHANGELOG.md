@@ -4,7 +4,20 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 
 ---
 
-## [v2.2] - 2026-09-06 (Terkini)
+## [v2.3] - 2026-09-06 (Terkini)
+
+### 🩺 Dokter Portfolio Groq AI (Rescue Plan Posisi Nyangkut) & Peningkatan Broksum Stockbit
+- **Fitur Dokter Portfolio AI (Rescue Plan):** Integrasi sistem diagnosa khusus posisi floating loss/nyangkut di tab Portfolio via `PortfolioRescueBottomSheet`.
+- **3 Keputusan Objektif AI:**
+  1. `🛑 [CUT LOSS SEKARANG]`: Jika bandar terdeteksi distribusi besar, support breakdown, atau saham gorengan liar berisiko gocap/suspensi.
+  2. `💎 [AVERAGING DOWN]`: Hanya jika fundamental emiten sehat, bandar terbukti masih akumulasi di bawah (*Average Price* dekat harga diskon), dan RSI harian oversold.
+  3. `⏳ [HOLD MENUNGGU REBOUND]`: Jika penurunan hanya pullback volume sepi dan modal bandar masih di atas harga sekarang.
+- **Peningkatan Data Broksum Stockbit:** Parsing kode broker pembeli vs penjual teratas (`topBrokers`: Top Buyer vs Top Seller) dari `exodus.stockbit.com/marketdetectors` dan disuapkan langsung ke prompt AI.
+- **Tombol Cepat di Tab Portfolio:** Tombol oranye mencolok `🩺 Konsultasi AI (Rescue / Avg / Cut Loss)` pada setiap kartu trade aktif di tab Portfolio.
+
+---
+
+## [v2.2] - 2026-09-06
 
 ### Dual-Mode Groq AI: Scalping Intraday & Swing Pendek (End-of-Day Broksum)
 - **Dual-Mode AI Architecture:** Groq AI kini memiliki 2 mode analisis khusus:

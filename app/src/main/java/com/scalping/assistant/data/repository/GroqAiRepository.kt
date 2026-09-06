@@ -13,7 +13,8 @@ import java.net.URL
 
 enum class GroqAnalysisMode {
     SCALPING,
-    SWING
+    SWING,
+    PORTFOLIO_RESCUE
 }
 
 class GroqAiRepository {
@@ -35,9 +36,9 @@ class GroqAiRepository {
         apiKey: String,
         mode: GroqAnalysisMode,
         dailyTech: DailyTechnicalSummary? = null
-    ): Result<String> = withContext(Dispatchers.IO) {
+    ): Result<String> {
         if (apiKey.isBlank()) {
-            return@withContext Result.failure(Exception("API Key belum disetel. Silakan masukkan Groq API Key Anda."))
+            return Result.failure(Exception("API Key belum disetel. Silakan masukkan Groq API Key Anda."))
         }
 
         val systemPrompt = if (mode == GroqAnalysisMode.SCALPING) {
@@ -66,7 +67,8 @@ class GroqAiRepository {
         }
 
         val bandarInfo = if (item.bandarDetector != null) {
-            "Bandar Detector: ${item.bandarDetector.accdistStatus} @ Rp ${item.bandarDetector.averagePrice.toInt()} (Total Nilai: ${formatCurrencyShort(item.bandarDetector.amountRupiah)})"
+            val brokerText = if (item.bandarDetector.topBrokers.isNotEmpty()) " (${item.bandarDetector.topBrokers})" else ""
+            "Bandar Detector: ${item.bandarDetector.accdistStatus} @ Rp ${item.bandarDetector.averagePrice.toInt()} (Total Nilai: ${formatCurrencyShort(item.bandarDetector.amountRupiah)})$brokerText"
         } else {
             "Bandar Detector: Menunggu data bursa"
         }
@@ -113,6 +115,86 @@ class GroqAiRepository {
         }
 
         val maxTokens = if (mode == GroqAnalysisMode.SWING) 400 else 220
+        return sendChatCompletion(systemPrompt, userContent, apiKey, maxTokens)
+    }
+
+    suspend fun getPortfolioRescueAnalysis(
+        trade: PortfolioTrade,
+        item: StockAnalysis?,
+        bandarDetector: com.scalping.assistant.data.models.BandarDetectorStat?,
+        dailyTech: DailyTechnicalSummary?,
+        apiKey: String
+    ): Result<String> {
+        if (apiKey.isBlank()) {
+            return Result.failure(Exception("API Key belum disetel. Silakan masukkan Groq API Key Anda."))
+        }
+
+        val systemPrompt = """
+            Kamu adalah Chief Portfolio Doctor & Senior Risk Manager di Bursa Efek Indonesia (IDX).
+            Tugasmu: Mendiagnosis posisi saham trader yang sedang floating loss / nyangkut dan memberikan keputusan penyelamatan (Rescue Plan) yang objektif, tegas, dan rasional.
+
+            PILIH SALAH SATU DARI 3 KEPUTUSAN UTAMA:
+            1. 🛑 [CUT LOSS SEKARANG] -> Jika terdeteksi bandar jualan/distribusi masif, support kunci jebol, atau saham gorengan liar berisiko ke gocap/suspensi.
+            2. 💎 [AVERAGING DOWN] -> HANYA JIKA: emiten fundamental sehat/laba bertumbuh, bandar masih Akumulasi Masif (modal bandar di bawah/dekat harga sekarang), dan harga sudah di support kuat dengan RSI oversold. Tentukan level harga averaging dan batas lot tambahan.
+            3. ⏳ [HOLD MENUNGGU REBOUND] -> Jika penurunan hanya koreksi sehat volume sepi, modal bandar masih di atas harga saat ini (bandar belum jualan), dan ada peluang pantulan teknikal.
+
+            Format output WAJIB dalam 3 poin terstruktur (maksimal 3-4 kalimat padat):
+            • 🩺 KEPUTUSAN RESCUE: [CUT LOSS SEKARANG] / [AVERAGING DOWN] / [HOLD MENUNGGU REBOUND]
+            • 🔍 Diagnosa Data: (Jelaskan status modal bandar vs harga beli Anda, support terdekat, dan volume buangan)
+            • 🛡️ Action Plan Konkret: (Langkah spesifik: titik harga averaging, target harga keluar modal saat rebound, atau batas stop loss mutlak).
+
+            Gunakan bahasa trader profesional Indonesia yang tegas, tanpa basa-basi formal, dan mengutamakan keselamatan modal.
+        """.trimIndent()
+
+        val bandar = bandarDetector ?: item?.bandarDetector
+        val bandarInfo = if (bandar != null) {
+            val brokerText = if (bandar.topBrokers.isNotEmpty()) " (${bandar.topBrokers})" else ""
+            "Bandar Detector: ${bandar.accdistStatus} @ Rp ${bandar.averagePrice.toInt()} (Total Nilai: ${formatCurrencyShort(bandar.amountRupiah)})$brokerText"
+        } else {
+            "Bandar Detector: Menunggu data bursa"
+        }
+
+        val techInfo = if (dailyTech != null) {
+            """
+            Teknikal Harian (Daily Chart Yahoo Finance):
+            - Trend: ${dailyTech.trend}
+            - MA20 Harian: Rp ${dailyTech.sma20.toInt()} | MA50 Harian: Rp ${dailyTech.sma50.toInt()}
+            - RSI(14) Harian: ${String.format("%.1f", dailyTech.rsi14)} (${if (dailyTech.rsi14 < 35) "Oversold/Area Akumulasi Murah" else if (dailyTech.rsi14 > 70) "Overbought/Rawan Koreksi" else "Netral"})
+            - Volume Terakhir: ${formatCurrencyShort(dailyTech.lastVolume)} lot (Rata-rata 5 Hari: ${formatCurrencyShort(dailyTech.volumeAvg5d)} lot)
+            - Range 52 Minggu: High Rp ${dailyTech.high52w.toInt()} | Low Rp ${dailyTech.low52w.toInt()}
+            """.trimIndent()
+        } else {
+            "Teknikal Harian: Menggunakan pivot dinamis bursa"
+        }
+
+        val s1 = item?.technical?.nearestSupport?.toInt() ?: (trade.entryPrice * 0.95).toInt()
+        val r1 = item?.technical?.nearestResistance?.toInt() ?: (trade.entryPrice * 1.05).toInt()
+
+        val userContent = """
+            DIAGNOSA POSISI PORTOFOLIO TRADER:
+            - Saham: ${trade.ticker}
+            - Harga Beli Rata-rata (Entry): Rp ${trade.entryPrice}
+            - Harga Pasar Saat Ini: Rp ${trade.currentPrice}
+            - Floating P&L: ${if (trade.pnlPercent >= 0) "+" else ""}${String.format("%.2f", trade.pnlPercent)}% (${formatCurrencyShort(trade.pnlRupiah)})
+            - Jumlah Lot Terpasang: ${trade.lot} lot (Total Modal: Rp ${formatCurrencyShort(trade.lot * 100L * trade.entryPrice)})
+            - Target TP Awal: Rp ${trade.targetPrice} | Stop Loss Awal: Rp ${trade.stopLoss}
+            
+            $bandarInfo
+            $techInfo
+            Support Kuat Terdekat: Rp $s1 | Resisten Kuat: Rp $r1
+            
+            Berikan evaluasi objektif dan keputusan penyelamatan posisi nyangkut ini: Cut Loss, Averaging Down, atau Hold?
+        """.trimIndent()
+
+        return sendChatCompletion(systemPrompt, userContent, apiKey, 400)
+    }
+
+    private suspend fun sendChatCompletion(
+        systemPrompt: String,
+        userContent: String,
+        apiKey: String,
+        maxTokens: Int
+    ): Result<String> = withContext(Dispatchers.IO) {
         var lastException: Exception? = null
 
         for (model in candidateModels) {
