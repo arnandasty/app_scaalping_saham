@@ -1,17 +1,29 @@
 package com.scalping.assistant.ui
 
+import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.scalping.assistant.R
 import com.scalping.assistant.data.models.StockAnalysis
+import com.scalping.assistant.data.repository.GroqAiRepository
+import kotlinx.coroutines.launch
 
 class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFragment() {
+
+    private val groqRepo = GroqAiRepository()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.bottom_sheet_detail, container, false)
@@ -34,6 +46,20 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
         val detailEntryStyle: android.widget.TextView = view.findViewById(R.id.detailEntryStyle)
         val etEntryPrice: EditText = view.findViewById(R.id.etEntryPrice)
         val etLotAmount: EditText = view.findViewById(R.id.etLotAmount)
+
+        // Groq AI Widgets
+        val tvGroqSummary: TextView = view.findViewById(R.id.tvGroqSummary)
+        val layoutGroqLoading: View = view.findViewById(R.id.layoutGroqLoading)
+        val btnAskGroq: Button = view.findViewById(R.id.btnAskGroq)
+        val btnGroqSettings: Button = view.findViewById(R.id.btnGroqSettings)
+
+        btnGroqSettings.setOnClickListener {
+            showGroqApiKeyDialog()
+        }
+
+        btnAskGroq.setOnClickListener {
+            requestGroqAnalysis(tvGroqSummary, layoutGroqLoading, btnAskGroq)
+        }
 
         val sign = if (item.changePercent > 0) "+" else ""
         val priceFormatted = formatPrice(item.lastPrice)
@@ -206,6 +232,104 @@ class DetailBottomSheet(private val item: StockAnalysis) : BottomSheetDialogFrag
             absVal >= 1_000_000.0 -> "${sign}Rp %.1f Jt".format(absVal / 1_000_000.0)
             absVal > 0 -> "${sign}Rp ${formatPrice(absVal.toInt())}"
             else -> "Rp 0"
+        }
+    }
+
+    private fun getGroqApiKey(): String {
+        val prefs = requireContext().getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
+        return prefs.getString("groq_api_key", "") ?: ""
+    }
+
+    private fun saveGroqApiKey(key: String) {
+        val prefs = requireContext().getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("groq_api_key", key.trim()).apply()
+    }
+
+    private fun showGroqApiKeyDialog(onSaved: (() -> Unit)? = null) {
+        val ctx = context ?: return
+        val currentKey = getGroqApiKey()
+
+        val input = EditText(ctx).apply {
+            hint = "gsk_..."
+            setText(currentKey)
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            setBackgroundColor(Color.parseColor("#1E293B"))
+            setPadding(32, 28, 32, 28)
+        }
+
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 24, 48, 12)
+            addView(input)
+        }
+
+        AlertDialog.Builder(ctx)
+            .setTitle("⚙️ Konfigurasi Groq AI")
+            .setMessage("Model: Meta Llama 3.1 8B Instant (Gratis & Cepat <300ms)\n\nMasukkan API Key Groq Anda. Jika belum punya, ambil gratis tanpa kartu kredit di console.groq.com/keys")
+            .setView(container)
+            .setPositiveButton("Simpan") { _, _ ->
+                val key = input.text.toString().trim()
+                saveGroqApiKey(key)
+                if (key.isNotEmpty()) {
+                    Toast.makeText(ctx, "✅ API Key Groq berhasil disimpan", Toast.LENGTH_SHORT).show()
+                    onSaved?.invoke()
+                } else {
+                    Toast.makeText(ctx, "API Key dikosongkan", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Batal", null)
+            .setNeutralButton("Daftar Groq") { _, _ ->
+                try {
+                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://console.groq.com/keys"))
+                    startActivity(browserIntent)
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, "Gagal membuka browser", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .show()
+    }
+
+    private fun requestGroqAnalysis(
+        tvGroqSummary: TextView,
+        layoutGroqLoading: View,
+        btnAskGroq: Button
+    ) {
+        val key = getGroqApiKey()
+        if (key.isBlank()) {
+            showGroqApiKeyDialog {
+                requestGroqAnalysis(tvGroqSummary, layoutGroqLoading, btnAskGroq)
+            }
+            return
+        }
+
+        btnAskGroq.isEnabled = false
+        layoutGroqLoading.visibility = View.VISIBLE
+        tvGroqSummary.text = "Memproses analisis orderflow & bandarmologi Llama 3.1..."
+        tvGroqSummary.setTextColor(Color.parseColor("#94A3B8"))
+
+        lifecycleScope.launch {
+            val result = groqRepo.getScalperOpinion(item, key)
+            if (!isAdded) return@launch
+
+            btnAskGroq.isEnabled = true
+            layoutGroqLoading.visibility = View.GONE
+
+            if (result.isSuccess) {
+                tvGroqSummary.text = result.getOrNull()
+                tvGroqSummary.setTextColor(Color.parseColor("#F1F5F9"))
+                btnAskGroq.text = "🔄 Segarkan Opini Groq"
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "Gagal menghubungi Groq"
+                tvGroqSummary.text = "⚠️ $err"
+                tvGroqSummary.setTextColor(Color.parseColor("#EF4444"))
+                btnAskGroq.text = "⚡ Coba Lagi (Groq AI)"
+
+                if (err.contains("401") || err.contains("API Key", ignoreCase = true) || err.contains("invalid", ignoreCase = true)) {
+                    Toast.makeText(requireContext(), "API Key mungkin tidak valid. Silakan periksa di tombol ⚙️ API Key.", Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 }

@@ -4,7 +4,18 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 
 ---
 
-## [v2.0] - 2026-09-06 (Terkini)
+## [v2.1] - 2026-09-06 (Terkini)
+
+### Integrasi On-Demand Groq AI (Meta Llama 3.1 8B Instant)
+- **Second-Opinion Senior Scalper AI:** Integrasi model LLM berkecepatan tinggi (*sub-300ms inference*) via `GroqAiRepository` langsung dari perangkat Android tanpa perantara cloud backend.
+- **100% Gratis & Tanpa Kartu Kredit:** Menggunakan tier gratis Groq Cloud dengan model `llama-3.1-8b-instant`.
+- **Manajemen Kunci API Fleksibel:** Pengguna dapat memasukkan, menyimpan, atau mengubah API Key Groq secara mandiri lewat dialog pengaturan di aplikasi (tersimpan aman di SharedPreferences), lengkap dengan tombol pintas buka web pendaftaran.
+- **Komponen UI Detail Sheet:** Menambahkan kartu institusional *"⚡ Groq AI (Meta Llama 3.1)"* dengan indikator proses loading real-time dan teks saran strategi scalping to-the-point (analisis modal bandar, pullback, konfirmasi entry/avoid).
+- **Arsitektur Zero-Latency:** Algoritma scoring dan eksekusi real-time tetap berjalan 100% di mesin lokal Kotlin (<1ms), sementara Groq AI dipanggil *on-demand* saat trader membuka detail emiten untuk analisis mendalam.
+
+---
+
+## [v2.0] - 2026-09-06
 
 ### Local WebSocket Intercept, Live Bandar Detector, & Anti-Pucuk Rules
 - **Local WebView Network Intercept:** Injeksi `stream_probe.js` untuk mencegat `window.WebSocket`, `EventSource`, `fetch`, dan `XMLHttpRequest` langsung di Android WebView tanpa server cloud luar (100% Free & Zero-Latency).

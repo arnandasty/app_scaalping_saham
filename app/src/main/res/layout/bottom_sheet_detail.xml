@@ -299,12 +299,123 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- Alasan & Analisis AI -->
+        <!-- Groq AI Advisor Card -->
+        <androidx.cardview.widget.CardView
+            android:id="@+id/cardGroqAi"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardBackgroundColor="@color/bg_card"
+            app:cardCornerRadius="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="⚡ Groq AI (Meta Llama 3.1)"
+                        android:textColor="#F97316"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <Button
+                        android:id="@+id/btnGroqSettings"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="0dp"
+                        android:text="⚙️ API Key"
+                        android:textColor="@color/text_muted"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Opini second-opinion senior scalper via ultra-low latency Groq Llama 3.1"
+                    android:textColor="@color/text_muted"
+                    android:textSize="11sp" />
+
+                <!-- Result Box -->
+                <LinearLayout
+                    android:id="@+id/layoutGroqResult"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_chip"
+                    android:orientation="vertical"
+                    android:padding="10dp">
+
+                    <TextView
+                        android:id="@+id/tvGroqSummary"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:lineSpacingExtra="3dp"
+                        android:text="Ketuk tombol di bawah untuk meminta opini Groq Llama 3.1 terkait posisi akumulasi bandar dan timing entry."
+                        android:textColor="@color/text_secondary"
+                        android:textIsSelectable="true"
+                        android:textSize="12sp" />
+
+                    <!-- Loading layout -->
+                    <LinearLayout
+                        android:id="@+id/layoutGroqLoading"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <ProgressBar
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:indeterminateTint="#F97316" />
+
+                        <TextView
+                            android:id="@+id/tvGroqLoadingStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="Menghubungi Groq Llama 3.1..."
+                            android:textColor="#F97316"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btnAskGroq"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:backgroundTint="#F97316"
+                    android:text="⚡ Minta Opini Scalper (Groq AI)"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Alasan & Analisis Logika Algoritma -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:text="🔍 Alasan Rekomendasi AI"
+            android:text="🔍 Logika Algoritma Scalper"
             android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
