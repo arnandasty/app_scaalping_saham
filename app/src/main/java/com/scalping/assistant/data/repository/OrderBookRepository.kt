@@ -1517,11 +1517,26 @@ class OrderBookRepository(
                             val source = obj.optString("source", "")
                             val historyKey = "movers_$ticker"
                             val existingSnap = synchronized(historyMap) { historyMap[historyKey]?.lastOrNull() ?: historyMap[ticker]?.lastOrNull() }
-                            val rawPriceToUse = if (lastPrice > 0) lastPrice else (existingSnap?.lastPrice ?: _moversFlow.value.find { it.ticker == ticker }?.lastPrice ?: 0)
-                            if (rawPriceToUse <= 0) return@async null
+                            val existingPriceForGuard = existingSnap?.lastPrice ?: _moversFlow.value.find { it.ticker == ticker }?.lastPrice ?: 0
+                            
+                            var priceToUse = if (lastPrice > 0) {
+                                if (existingPriceForGuard > 0) {
+                                    val tickGuard = PriceFraction.getTickSize(existingPriceForGuard)
+                                    val diff = kotlin.math.abs(existingPriceForGuard - lastPrice)
+                                    if (diff > tickGuard * 4) {
+                                        existingPriceForGuard // Guard: Abaikan harga scraper yg telat (kepental)
+                                    } else {
+                                        lastPrice
+                                    }
+                                } else {
+                                    lastPrice
+                                }
+                            } else {
+                                existingPriceForGuard
+                            }
+                            if (priceToUse <= 0) return@async null
 
                             // Sanitize terhadap existing orderbook jika tersedia
-                            var priceToUse = rawPriceToUse
                             val existingBid = existingSnap?.bidLevels?.firstOrNull()?.price ?: 0
                             val existingOffer = existingSnap?.offerLevels?.firstOrNull()?.price ?: 0
                             if (existingBid > 0 && existingOffer > 0 && existingBid <= existingOffer) {
@@ -1661,7 +1676,9 @@ class OrderBookRepository(
     private fun refreshTopPicks() {
         val all = (_manualFlow.value + _moversFlow.value)
             .sortedByDescending { it.score }
-        // Top Picks: score ≥ 72, RR ≥ 1.4, snapshot sudah cukup (≥5), dan BUKAN AVOID (misal ARA)
+            .distinctBy { it.ticker }
+
+        // Top Picks: Dikembalikan ke aturan KETAT seperti awal (Filter kualitas tinggi)
         _topPicksFlow.value = all.filter {
             it.score >= 72 && it.riskRewardRatio >= 1.4 && it.snapshotCount >= 5 && it.recommendation != com.scalping.assistant.data.models.Recommendation.AVOID
         }.take(5)

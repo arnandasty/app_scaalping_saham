@@ -57,7 +57,7 @@ class RankingAdapter(
             
             val sign = if (item.changePercent > 0) "+" else ""
             val priceFormatted = formatPrice(item.lastPrice)
-            tvTicker.text = "${item.ticker} Rp $priceFormatted ($sign${item.changePercent}%)"
+            tvTicker.text = "${item.ticker} Rp $priceFormatted ($sign${String.format("%.2f", item.changePercent)}%)"
             
             if (item.changePercent > 0) {
                 tvTicker.setTextColor(Color.parseColor("#10B981")) // Green
@@ -86,7 +86,7 @@ class RankingAdapter(
                 }
             }
 
-            tvProfitEst.text = "Target: +${item.estimatedProfitPercent}%"
+            tvProfitEst.text = "Target: +${String.format("%.2f", item.estimatedProfitPercent)}%"
             tvEntry.text = "Entry: ${formatPrice(item.entryPrice)}"
             tvTarget.text = "Target: ${formatPrice(item.targetPrice)}"
             tvStopLoss.text = "SL: ${formatPrice(item.stopLoss)}"

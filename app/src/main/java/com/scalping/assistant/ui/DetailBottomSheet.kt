@@ -141,7 +141,7 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
 
         val sign = if (item.changePercent > 0) "+" else ""
         val priceFormatted = formatPrice(item.lastPrice)
-        detailTicker.text = "${item.ticker} Rp $priceFormatted ($sign${item.changePercent}%)"
+        detailTicker.text = "${item.ticker} Rp $priceFormatted ($sign${String.format("%.2f", item.changePercent)}%)"
         
         if (item.changePercent > 0) {
             detailTicker.setTextColor(Color.parseColor("#10B981"))
@@ -176,7 +176,7 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
 
         detailEntry.text = "Rp ${formatPrice(item.entryPrice)}"
         detailEntryStyle.text = "(Gaya: ${item.style})"
-        detailTarget.text = "Rp ${formatPrice(item.targetPrice)} (+${item.estimatedProfitPercent}%)"
+        detailTarget.text = "Rp ${formatPrice(item.targetPrice)} (+${String.format("%.2f", item.estimatedProfitPercent)}%)"
         detailStopLoss.text = "Rp ${formatPrice(item.stopLoss)}"
 
         // Bandar Detector live stream binding
