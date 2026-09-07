@@ -39,6 +39,17 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
         return inflater.inflate(R.layout.bottom_sheet_detail, container, false)
     }
 
+    override fun onStart() {
+        super.onStart()
+        val d = dialog as? com.google.android.material.bottomsheet.BottomSheetDialog ?: return
+        val bottomSheet = d.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet) ?: return
+        val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet)
+        behavior.isFitToContents = false
+        val screenHeight = resources.displayMetrics.heightPixels
+        behavior.peekHeight = (screenHeight * 0.70).toInt()
+        bottomSheet.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -273,11 +284,15 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
 
         if (bandar != null) {
             val statusClean = bandar.accdistStatus.trim()
-            val (statusText, statusBg, statusTextColor) = when (statusClean) {
-                "Big Acc" -> Triple("🟢 Big Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
-                "Acc" -> Triple("🟢 Normal Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
-                "Big Dist" -> Triple("🔴 Big Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
-                "Dist" -> Triple("🔴 Normal Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
+            val (statusText, statusBg, statusTextColor) = when {
+                bandar.bandarProfile == "RETAIL_TRAP" -> Triple("⚠️ Perangkap Ritel", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
+                bandar.bandarProfile == "PURE_ACCUMULATION" -> Triple("🟢 Akumulasi Bandar", R.drawable.bg_score_green, Color.parseColor("#10B981"))
+                bandar.bandarProfile == "SCALPER_ACTIVE" -> Triple("⚡ Bandar Scalper", R.drawable.bg_score_green, Color.parseColor("#F59E0B"))
+                bandar.bandarProfile == "RETAIL_MOMENTUM" -> Triple("⚡ Scalping Ritel", R.drawable.bg_score_yellow, Color.parseColor("#38BDF8"))
+                statusClean == "Big Acc" -> Triple("🟢 Big Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
+                statusClean == "Acc" -> Triple("🟢 Normal Accumulation", R.drawable.bg_score_green, Color.parseColor("#10B981"))
+                statusClean == "Big Dist" -> Triple("🔴 Big Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
+                statusClean == "Dist" -> Triple("🔴 Normal Distribution", R.drawable.bg_score_red, Color.parseColor("#EF4444"))
                 else -> Triple("⚪ Neutral / Seimbang", R.drawable.bg_chip, Color.parseColor("#94A3B8"))
             }
             detailBandarStatus.text = statusText
@@ -290,6 +305,18 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
             val avgDiff = if (bandar.averagePrice > 0) ((item.lastPrice - bandar.averagePrice) / bandar.averagePrice) * 100 else 0.0
             val diffStr = if (avgDiff >= 0) "+%.1f%%".format(avgDiff) else "%.1f%%".format(avgDiff)
             val note = when {
+                bandar.bandarProfile == "RETAIL_TRAP" -> {
+                    val buyers = if (bandar.topBrokers.isNotEmpty()) bandar.topBrokers.split("|").firstOrNull()?.replace("Top Buyer:", "")?.trim() ?: "" else ""
+                    val buyerLabel = if (buyers.isNotEmpty()) " ($buyers)" else ""
+                    "⚠️ PERANGKAP RITEL: Top buyer didominasi broker ritel$buyerLabel sementara bandar distribusi cuci gudang!"
+                }
+                bandar.bandarProfile == "RETAIL_MOMENTUM" -> {
+                    val buyers = if (bandar.topBrokers.isNotEmpty()) bandar.topBrokers.split("|").firstOrNull()?.replace("Top Buyer:", "")?.trim() ?: "" else ""
+                    val buyerLabel = if (buyers.isNotEmpty()) " ($buyers)" else ""
+                    "⚡ MOMENTUM RITEL: Saham ramai ditransaksikan broker ritel$buyerLabel. Likuid untuk scalping kilat 1-3 tick!"
+                }
+                bandar.bandarProfile == "PURE_ACCUMULATION" -> "🔥 AKUMULASI BANDAR MURNI: Broker bandar/asing agresif serok barang dari ritel yang cut loss!"
+                bandar.bandarProfile == "SCALPER_ACTIVE" -> "⚡ BANDAR SCALPER AKTIF: Broker bandar scalper/gorengan aktif di top buy. Pergerakan sangat agresif!"
                 statusClean.contains("Dist") -> "⚠️ Hati-hati! Bandar sedang distribusi masif. Dilarang beli / hindari perangkap pucuk!"
                 bandar.averagePrice > 0 && item.lastPrice <= bandar.averagePrice -> "💎 Harga saat ini ($diffStr dari avg bandar) berada di bawah/setara harga modal bandar — Risk/Reward sangat menguntungkan!"
                 bandar.averagePrice > 0 && item.lastPrice > bandar.averagePrice -> "ℹ️ Harga saat ini $diffStr di atas avg bandar (Rp ${formatPrice(bandar.averagePrice.toInt())}). Pastikan ada bantalan support jika ingin masuk."
@@ -297,14 +324,23 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
             }
             val extraDetails = buildString {
                 append(note)
-                if (bandar.topConcentration.isNotEmpty()) append("\n📊 ${bandar.topConcentration}")
+                if (bandar.bandarProfileLabel.isNotEmpty()) {
+                    append("\n🎯 Profil: ${bandar.bandarProfileLabel}")
+                }
+                if (bandar.avgCalculationSource.isNotEmpty()) {
+                    append("\n💡 Dasar Avg: ${bandar.avgCalculationSource}")
+                }
+                if (bandar.retailVsBandarSummary.isNotEmpty()) {
+                    append("\n👥 Flow: ${bandar.retailVsBandarSummary}")
+                }
+                if (bandar.topConcentration.isNotEmpty()) append("\n📊 Konsentrasi: ${bandar.topConcentration}")
                 if (bandar.foreignFlow.isNotEmpty()) append("\n🌐 ${bandar.foreignFlow}")
                 if (bandar.foreignFlowMultiDay.isNotEmpty()) append("\n🗓️ ${bandar.foreignFlowMultiDay}")
                 if (bandar.smartMoneySummary.isNotEmpty()) append("\n⚡ ${bandar.smartMoneySummary}")
                 if (bandar.topBrokers.isNotEmpty()) append("\n💼 ${bandar.topBrokers}")
             }
             detailBandarPullbackNote.text = extraDetails
-            detailBandarPullbackNote.setTextColor(if (statusClean.contains("Dist")) Color.parseColor("#EF4444") else Color.parseColor("#38BDF8"))
+            detailBandarPullbackNote.setTextColor(if (statusClean.contains("Dist") || bandar.bandarProfile == "RETAIL_TRAP") Color.parseColor("#EF4444") else Color.parseColor("#38BDF8"))
         } else {
             detailBandarStatus.text = "Menghubungkan Data..."
             detailBandarAvg.text = "-"

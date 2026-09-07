@@ -72,15 +72,8 @@ class PortfolioRescueBottomSheet(
         }
 
         btnExecuteCutLoss.setOnClickListener {
-            AlertDialog.Builder(requireContext())
-                .setTitle("Konfirmasi Cut Loss")
-                .setMessage("Apakah Anda yakin ingin mengeksekusi cut loss untuk ${trade.ticker} pada harga pasar Rp ${trade.currentPrice}?")
-                .setPositiveButton("Ya, Cut Loss") { _, _ ->
-                    (activity as? MainActivity)?.closeTradeByTicker(trade.ticker)
-                    dismiss()
-                }
-                .setNegativeButton("Batal", null)
-                .show()
+            (activity as? MainActivity)?.showExitTradeDialog(trade, isTakeProfit = false)
+            dismiss()
         }
 
         (activity as? MainActivity)?.requestMultiDayBandarDetector(trade.ticker)

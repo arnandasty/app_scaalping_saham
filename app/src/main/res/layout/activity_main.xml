@@ -46,26 +46,37 @@
     <LinearLayout
         android:id="@+id/dividerDragHandle"
         android:layout_width="match_parent"
-        android:layout_height="22dp"
+        android:layout_height="26dp"
         android:background="#1A2235"
         android:gravity="center"
-        android:orientation="vertical"
+        android:orientation="horizontal"
         android:clickable="true"
-        android:focusable="true">
+        android:focusable="true"
+        android:paddingHorizontal="16dp">
 
-        <!-- Garis drag handle (3 garis pendek) -->
+        <TextView
+            android:id="@+id/tvDragIndicatorLeft"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="▲"
+            android:textColor="#94A3B8"
+            android:textSize="11sp"
+            android:layout_marginEnd="10dp" />
+
         <View
-            android:layout_width="36dp"
-            android:layout_height="3dp"
-            android:layout_marginBottom="2dp"
+            android:layout_width="48dp"
+            android:layout_height="4dp"
             android:background="#4A5568"
             android:backgroundTint="#4A5568" />
 
-        <View
-            android:layout_width="24dp"
-            android:layout_height="3dp"
-            android:background="#4A5568"
-            android:backgroundTint="#4A5568" />
+        <TextView
+            android:id="@+id/tvDragIndicatorRight"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="▲"
+            android:textColor="#94A3B8"
+            android:textSize="11sp"
+            android:layout_marginStart="10dp" />
 
     </LinearLayout>
 
@@ -80,6 +91,7 @@
 
         <!-- Top Status Bar: Sesi Pasar & Waktu -->
         <LinearLayout
+            android:id="@+id/llSessionBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="#131B2E"
@@ -126,6 +138,7 @@
 
         <!-- Subheader: Judul & Subtitle status scraping -->
         <LinearLayout
+            android:id="@+id/llHeaderAiPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
@@ -154,6 +167,21 @@
                 android:textColor="@color/brand_accent"
                 android:textSize="12sp"
                 android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btnToggleFullscreen"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_chip"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:text="⤢ Full"
+                android:textColor="@color/brand_accent"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:clickable="true"
+                android:focusable="true" />
         </LinearLayout>
 
         <!-- Status Scan Log -->

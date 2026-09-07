@@ -430,26 +430,37 @@ window.autoFillTickers = function(tickers) {
                     changePercent = parseFloat(pctMatch[1].replace(',', '.'));
                 }
 
+                // Tentukan harga terbaik dari Order Book
+                var bestOffer = offerLevels.length > 0 ? offerLevels[0].price : 0;
+                var bestBid = bidLevels.length > 0 ? bidLevels[0].price : 0;
+                var extractedPrice = 0;
+
                 // Cari angka harga aktual (last price) dari token sebelum header orderbook
-                var scanFrom = headerIdx !== -1 ? headerIdx + 1 : 0;
-                
                 for (var p = 0; p < (headerIdx !== -1 ? headerIdx : Math.min(tokens.length, 20)); p++) {
-                    var tVal = tokens[p];
+                    var tVal = tokens[p].trim();
+                    // JANGAN ambil perubahan harga (+/-), persentase (%), atau tanda kurung
+                    if (tVal.startsWith('+') || tVal.startsWith('-') || tVal.includes('%') || tVal.startsWith('(')) continue;
                     var val = parseNum(tVal);
-                    // Ambil angka valid pertama yang murni harga (bukan persentase)
-                    if (val >= 50 && val <= 99000 && !tVal.includes('%')) {
-                        lastPrice = val;
-                        break;
+                    // Validasi ketat: harga harus mendekati best bid / best offer
+                    if (val > 0) {
+                        if (bestBid > 0 && bestOffer > 0) {
+                            if (val >= Math.floor(bestBid * 0.90) && val <= Math.ceil(bestOffer * 1.10)) {
+                                extractedPrice = val;
+                                break;
+                            }
+                        } else if (val >= 1 && val <= 99000) {
+                            extractedPrice = val;
+                            break;
+                        }
                     }
                 }
 
-                // Fallback terakhir
-                if (lastPrice === 0) {
-                    var lpMatch = wText.match(/(\d[\d,.]*)\s*[↑↓⬆⬇+\-]/);
-                    if (lpMatch) {
-                        var candidate = parseNum(lpMatch[1]);
-                        if (candidate >= 50 && candidate <= 99000) lastPrice = candidate;
-                    }
+                if (extractedPrice > 0) {
+                    lastPrice = extractedPrice;
+                } else if (bestOffer > 0) {
+                    lastPrice = bestOffer;
+                } else if (bestBid > 0) {
+                    lastPrice = bestBid;
                 }
 
                 if (lastPrice > 0 && (bidLevels.length > 0 || offerLevels.length > 0)) {

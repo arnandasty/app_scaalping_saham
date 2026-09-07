@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.webkit.WebChromeClient
@@ -58,10 +59,24 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStockCount: TextView
     private lateinit var tvStatusLog: TextView
 
-    // Drag handle views
+    // Drag handle views & Fullscreen layout
     private lateinit var webViewContainer: android.widget.FrameLayout
     private lateinit var dividerDragHandle: LinearLayout
+    private lateinit var tvDragIndicatorLeft: TextView
+    private lateinit var tvDragIndicatorRight: TextView
+    private lateinit var llSessionBar: LinearLayout
+    private lateinit var llHeaderAiPanel: LinearLayout
+    private lateinit var btnToggleFullscreen: TextView
     private lateinit var aiPanelContainer: LinearLayout
+
+    enum class LayoutMode {
+        FULL_AI,    // 100% Layar penuh untuk Rekomendasi Scalping (WebView GONE)
+        SPLIT,      // Split Screen (~50/50)
+        FULL_WEB    // WebView maksimal, panel AI minim (~90/10)
+    }
+
+    private var currentLayoutMode = LayoutMode.SPLIT
+    private val TOTAL_WEIGHT = 100f
 
     private lateinit var pagerAdapter: com.scalping.assistant.ui.RankingPagerAdapter
     private lateinit var yahooRepo: YahooFinanceRepository
@@ -78,17 +93,6 @@ class MainActivity : AppCompatActivity() {
     private val lastRequestedBandarMultiDay = mutableMapOf<String, Long>()
     private var stockbitAuthToken = ""
     private val PREF_STOCKBIT_TOKEN = "stockbit_auth_token"
-
-
-    // ============================================================
-    // Drag Handle State
-    // ============================================================
-    private var dragStartY = 0f
-    private var dragStartWebviewWeight = 55f
-    private var dragStartAiWeight = 45f
-    private val TOTAL_WEIGHT = 100f
-    // 3 preset layout mode
-    private var layoutMode = 0 // 0=55/45, 1=35/65 (AI besar), 2=70/30 (WebView besar)
 
     // ============================================================
     // Scraping Runnables
@@ -111,13 +115,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (moversInjectorScript.isNotEmpty()) {
                     webViewMovers.evaluateJavascript(moversInjectorScript, null)
-                }
-                if (moversTickers.isNotEmpty() && injectorScript.isNotEmpty()) {
-                    val tickersJson = org.json.JSONArray(moversTickers).toString()
-                    val autoFillAndScrape = "if(typeof window.autoFillTickers === 'function') { window.autoFillTickers($tickersJson); } $injectorScript"
-                    handler.postDelayed({
-                        webViewMovers.evaluateJavascript(autoFillAndScrape, null)
-                    }, 500L)
                 }
             }
             
@@ -146,6 +143,8 @@ class MainActivity : AppCompatActivity() {
     // Tracking untuk mencegah spam notifikasi TP/SL
     private val notifiedTPTrades = mutableMapOf<String, Long>()
     private val notifiedSLTrades = mutableMapOf<String, Long>()
+    private var activeBailoutDialog: android.app.AlertDialog? = null
+    private var isCutLossAlarmMuted = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -184,17 +183,23 @@ class MainActivity : AppCompatActivity() {
         }
         webViewContainer = findViewById(R.id.webViewContainer)
         dividerDragHandle = findViewById(R.id.dividerDragHandle)
+        tvDragIndicatorLeft = findViewById(R.id.tvDragIndicatorLeft)
+        tvDragIndicatorRight = findViewById(R.id.tvDragIndicatorRight)
+        llSessionBar = findViewById(R.id.llSessionBar)
+        llHeaderAiPanel = findViewById(R.id.llHeaderAiPanel)
+        btnToggleFullscreen = findViewById(R.id.btnToggleFullscreen)
         aiPanelContainer = findViewById(R.id.aiPanelContainer)
     }
 
     private fun initServices() {
         yahooRepo = YahooFinanceRepository()
-        orderBookRepo = OrderBookRepository(yahooRepo)
+        orderBookRepo = OrderBookRepository(applicationContext, yahooRepo)
 
         loadPortfolioFromPrefs()
 
         val prefs = getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
         stockbitAuthToken = prefs.getString(PREF_STOCKBIT_TOKEN, "") ?: ""
+        isCutLossAlarmMuted = prefs.getBoolean("pref_mute_cutloss_alarm", false)
         if (stockbitAuthToken.isNotEmpty()) {
             Log.d("BANDAR_NATIVE", "Loaded saved Stockbit token (${stockbitAuthToken.take(8)}...)")
         }
@@ -231,6 +236,22 @@ class MainActivity : AppCompatActivity() {
                     val rawSL = obj.optInt("stopLoss", defaultSL)
                     val stopLoss = if (rawSL <= 0 || rawSL >= entryPrice) defaultSL else rawSL
 
+                    val isActive = obj.optBoolean("isActive", true)
+                    val closePrice = obj.optInt("closePrice", 0)
+                    val currentPrice = obj.optInt("currentPrice", entryPrice)
+                    val effectivePrice = if (!isActive && closePrice > 0) closePrice else currentPrice
+                    val defaultPnl = if (entryPrice > 0) ((effectivePrice - entryPrice).toDouble() / entryPrice) * 100 else 0.0
+                    val defaultPnlRp = (effectivePrice - entryPrice).toLong() * obj.getInt("lot") * 100
+                    val pnlPercent = obj.optDouble("pnlPercent", defaultPnl)
+                    val pnlRupiah = obj.optLong("pnlRupiah", defaultPnlRp)
+                    val status = obj.optString("status", if (isActive) "ACTIVE" else "MANUAL")
+                    val aiAction = if (isActive) "TAHAN" else when (status) {
+                        "TP" -> "🎯 TAKE PROFIT"
+                        "SL" -> "🛑 CUT LOSS"
+                        else -> "DITUTUP ($status)"
+                    }
+                    val aiReason = if (isActive) "" else "Posisi direalisasikan keluar pada harga Rp $closePrice"
+
                     list.add(
                         com.scalping.assistant.data.repository.PortfolioTrade(
                             id = obj.optString("id", java.util.UUID.randomUUID().toString()),
@@ -238,13 +259,17 @@ class MainActivity : AppCompatActivity() {
                             entryPrice = entryPrice,
                             lot = obj.getInt("lot"),
                             buyTime = obj.optLong("buyTime", System.currentTimeMillis()),
-                            currentPrice = obj.optInt("currentPrice", entryPrice),
+                            currentPrice = effectivePrice,
+                            pnlPercent = pnlPercent,
+                            pnlRupiah = pnlRupiah,
+                            aiAction = aiAction,
+                            aiReason = aiReason,
                             targetPrice = targetPrice,
                             stopLoss = stopLoss,
-                            isActive = obj.optBoolean("isActive", true),
-                            closePrice = obj.optInt("closePrice", 0),
+                            isActive = isActive,
+                            closePrice = closePrice,
                             closeTime = obj.optLong("closeTime", 0L),
-                            status = obj.optString("status", "ACTIVE")
+                            status = status
                         )
                     )
                 }
@@ -266,6 +291,8 @@ class MainActivity : AppCompatActivity() {
             obj.put("lot", trade.lot)
             obj.put("buyTime", trade.buyTime)
             obj.put("currentPrice", trade.currentPrice)
+            obj.put("pnlPercent", trade.pnlPercent)
+            obj.put("pnlRupiah", trade.pnlRupiah)
             obj.put("targetPrice", trade.targetPrice)
             obj.put("stopLoss", trade.stopLoss)
             obj.put("isActive", trade.isActive)
@@ -279,49 +306,180 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // DRAG HANDLE SETUP
+    // DRAG HANDLE & FULLSCREEN SETUP
     // ============================================================
+
+    fun setLayoutMode(mode: LayoutMode, showFeedbackToast: Boolean = false) {
+        currentLayoutMode = mode
+        when (mode) {
+            LayoutMode.FULL_AI -> {
+                webViewContainer.visibility = View.GONE
+                applyLayoutWeights(0f, 100f)
+                btnToggleFullscreen.text = "🗗 Split"
+                btnToggleFullscreen.setTextColor(Color.parseColor("#10B981"))
+                tvDragIndicatorLeft.text = "▼"
+                tvDragIndicatorRight.text = "▼"
+                if (showFeedbackToast) {
+                    Toast.makeText(this, "📱 Rekomendasi Scalping: 1 Layar Penuh", Toast.LENGTH_SHORT).show()
+                }
+            }
+            LayoutMode.SPLIT -> {
+                webViewContainer.visibility = View.VISIBLE
+                applyLayoutWeights(50f, 50f)
+                btnToggleFullscreen.text = "⤢ Full"
+                btnToggleFullscreen.setTextColor(Color.parseColor("#38BDF8"))
+                tvDragIndicatorLeft.text = "▲"
+                tvDragIndicatorRight.text = "▲"
+            }
+            LayoutMode.FULL_WEB -> {
+                webViewContainer.visibility = View.VISIBLE
+                applyLayoutWeights(88f, 12f)
+                btnToggleFullscreen.text = "⤢ Full"
+                btnToggleFullscreen.setTextColor(Color.parseColor("#38BDF8"))
+                tvDragIndicatorLeft.text = "▲"
+                tvDragIndicatorRight.text = "▲"
+            }
+        }
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupDragHandle() {
-        dividerDragHandle.setOnTouchListener { _, event ->
-            when (event.action) {
+        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
+                if (e1 == null) return false
+                val diffY = e2.rawY - e1.rawY
+                // Swipe / Fling ke ATAS kencang -> Langsung 1 Layar Full Rekomendasi Scalping!
+                if (diffY < -50 && velocityY < -200) {
+                    setLayoutMode(LayoutMode.FULL_AI, showFeedbackToast = true)
+                    return true
+                }
+                // Swipe / Fling ke BAWAH kencang
+                if (diffY > 50 && velocityY > 200) {
+                    if (currentLayoutMode == LayoutMode.FULL_AI) {
+                        setLayoutMode(LayoutMode.SPLIT)
+                    } else if (currentLayoutMode == LayoutMode.SPLIT) {
+                        setLayoutMode(LayoutMode.FULL_WEB)
+                    }
+                    return true
+                }
+                return false
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                // Single tap pada handle -> toggle Full AI <-> Split
+                if (currentLayoutMode == LayoutMode.FULL_AI) {
+                    setLayoutMode(LayoutMode.SPLIT)
+                } else {
+                    setLayoutMode(LayoutMode.FULL_AI, showFeedbackToast = true)
+                }
+                return true
+            }
+        })
+
+        var isDragging = false
+        var startRawY = 0f
+        var startWebWeight = 50f
+
+        val dragTouchListener = View.OnTouchListener { _, event ->
+            if (gestureDetector.onTouchEvent(event)) {
+                return@OnTouchListener true
+            }
+
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    dragStartY = event.rawY
-                    dragStartWebviewWeight = (webViewContainer.layoutParams as LinearLayout.LayoutParams).weight
-                    dragStartAiWeight = (aiPanelContainer.layoutParams as LinearLayout.LayoutParams).weight
+                    startRawY = event.rawY
+                    startWebWeight = if (webViewContainer.visibility == View.GONE) 0f
+                    else {
+                        val lp = webViewContainer.layoutParams as? LinearLayout.LayoutParams
+                        lp?.weight ?: 50f
+                    }
+                    isDragging = true
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val deltaY = event.rawY - dragStartY
+                    if (!isDragging) return@OnTouchListener false
+                    val deltaY = event.rawY - startRawY
                     val screenHeight = resources.displayMetrics.heightPixels.toFloat()
                     val deltaWeight = (deltaY / screenHeight) * TOTAL_WEIGHT
 
-                    val newWebWeight = (dragStartWebviewWeight + deltaWeight).coerceIn(20f, 75f)
-                    val newAiWeight = TOTAL_WEIGHT - newWebWeight
+                    val candidateWebWeight = (startWebWeight + deltaWeight).coerceIn(0f, 90f)
 
-                    applyLayoutWeights(newWebWeight, newAiWeight)
+                    if (candidateWebWeight <= 8f) {
+                        // Drag sampai dekat batas atas -> sembunyikan WebView
+                        if (webViewContainer.visibility != View.GONE) {
+                            webViewContainer.visibility = View.GONE
+                        }
+                        applyLayoutWeights(0f, 100f)
+                        tvDragIndicatorLeft.text = "▼"
+                        tvDragIndicatorRight.text = "▼"
+                    } else {
+                        if (webViewContainer.visibility != View.VISIBLE) {
+                            webViewContainer.visibility = View.VISIBLE
+                        }
+                        applyLayoutWeights(candidateWebWeight, TOTAL_WEIGHT - candidateWebWeight)
+                        tvDragIndicatorLeft.text = "▲"
+                        tvDragIndicatorRight.text = "▲"
+                    }
                     true
                 }
-                MotionEvent.ACTION_UP -> {
-                    // Snap ke preset terdekat saat dilepas
-                    val currentWebWeight = (webViewContainer.layoutParams as LinearLayout.LayoutParams).weight
-                    snapToNearestPreset(currentWebWeight)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    isDragging = false
+                    val currentWeight = if (webViewContainer.visibility == View.GONE) 0f
+                    else {
+                        val lp = webViewContainer.layoutParams as? LinearLayout.LayoutParams
+                        lp?.weight ?: 50f
+                    }
+
+                    when {
+                        currentWeight < 20f -> setLayoutMode(LayoutMode.FULL_AI, showFeedbackToast = true)
+                        currentWeight > 75f -> setLayoutMode(LayoutMode.FULL_WEB)
+                        else -> setLayoutMode(LayoutMode.SPLIT)
+                    }
                     true
                 }
                 else -> false
             }
         }
 
-        // Tap pada drag handle → cycle through 3 preset mode
-        dividerDragHandle.setOnClickListener {
-            layoutMode = (layoutMode + 1) % 3
-            when (layoutMode) {
-                0 -> { applyLayoutWeights(55f, 45f); Toast.makeText(this, "Mode: Stockbit Lebih Besar", Toast.LENGTH_SHORT).show() }
-                1 -> { applyLayoutWeights(35f, 65f); Toast.makeText(this, "Mode: AI Panel Lebih Besar", Toast.LENGTH_SHORT).show() }
-                2 -> { applyLayoutWeights(70f, 30f); Toast.makeText(this, "Mode: Stockbit Maksimal", Toast.LENGTH_SHORT).show() }
+        // Listener drag/swipe aktif pada Divider Drag Handle, Session Bar, dan Header Panel
+        dividerDragHandle.setOnTouchListener(dragTouchListener)
+        llSessionBar.setOnTouchListener(dragTouchListener)
+        llHeaderAiPanel.setOnTouchListener(dragTouchListener)
+
+        // Tombol Fullscreen / Split toggle langsung
+        btnToggleFullscreen.setOnClickListener {
+            if (currentLayoutMode == LayoutMode.FULL_AI) {
+                setLayoutMode(LayoutMode.SPLIT)
+            } else {
+                setLayoutMode(LayoutMode.FULL_AI, showFeedbackToast = true)
             }
         }
+
+        // Handle Back Button: jika sedang Fullscreen AI, kembalikan ke Split Screen dulu
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (currentLayoutMode == LayoutMode.FULL_AI) {
+                    setLayoutMode(LayoutMode.SPLIT)
+                } else if (currentLayoutMode == LayoutMode.FULL_WEB) {
+                    setLayoutMode(LayoutMode.SPLIT)
+                } else if (webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    if (System.currentTimeMillis() - backPressedTime < 2000) {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    } else {
+                        backPressedTime = System.currentTimeMillis()
+                        Toast.makeText(this@MainActivity, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        })
     }
 
     private fun applyLayoutWeights(webWeight: Float, aiWeight: Float) {
@@ -332,13 +490,6 @@ class MainActivity : AppCompatActivity() {
         val aiParams = aiPanelContainer.layoutParams as LinearLayout.LayoutParams
         aiParams.weight = aiWeight
         aiPanelContainer.layoutParams = aiParams
-    }
-
-    private fun snapToNearestPreset(currentWeight: Float) {
-        val presets = listOf(35f, 55f, 70f)
-        val nearest = presets.minByOrNull { Math.abs(it - currentWeight) } ?: 55f
-        layoutMode = presets.indexOf(nearest)
-        applyLayoutWeights(nearest, TOTAL_WEIGHT - nearest)
     }
 
     // ============================================================
@@ -367,11 +518,40 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun closeTradeByTicker(ticker: String) {
-        val trades = orderBookRepo.getPortfolioList().filter { it.ticker == ticker && it.isActive }
-        for (trade in trades) {
-            orderBookRepo.closePortfolioTrade(trade.id, trade.currentPrice, "MANUAL")
+        val trade = orderBookRepo.getPortfolioList().firstOrNull { it.ticker.equals(ticker, ignoreCase = true) && it.isActive }
+        if (trade != null) {
+            val isProfit = trade.currentPrice >= trade.entryPrice
+            showExitTradeDialog(trade, isTakeProfit = isProfit)
         }
-        Toast.makeText(this, "Trade $ticker ditutup manual.", Toast.LENGTH_SHORT).show()
+    }
+
+    fun showExitTradeDialog(trade: com.scalping.assistant.data.repository.PortfolioTrade, isTakeProfit: Boolean) {
+        val sheet = com.scalping.assistant.ui.ExitTradeBottomSheet(trade, isTakeProfit) { exitPrice, status ->
+            orderBookRepo.closePortfolioTrade(trade.id, closePrice = exitPrice, status = status)
+            val diff = exitPrice - trade.entryPrice
+            val pnlPct = if (trade.entryPrice > 0) (diff.toDouble() / trade.entryPrice) * 100 else 0.0
+            val pnlSign = if (pnlPct >= 0) "+" else ""
+            val statusLabel = if (status == "TP") "Take Profit" else "Cut Loss"
+            val icon = if (status == "TP") "💰" else "🛑"
+            Toast.makeText(
+                this,
+                "$icon Sukses $statusLabel ${trade.ticker} di Rp $exitPrice ($pnlSign${String.format("%.2f", pnlPct)}%). Tersimpan di Riwayat!",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        sheet.show(supportFragmentManager, "ExitTradeBottomSheet")
+    }
+
+    fun showDeleteTradeDialog(trade: com.scalping.assistant.data.repository.PortfolioTrade) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Hapus Riwayat ${trade.ticker}")
+            .setMessage("Hapus catatan transaksi ${trade.ticker} (Rp ${trade.closePrice}) dari Track Record?")
+            .setPositiveButton("Hapus") { _, _ ->
+                orderBookRepo.deletePortfolioTrade(trade.id)
+                Toast.makeText(this, "Catatan transaksi ${trade.ticker} telah dihapus.", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Batal", null)
+            .show()
     }
 
     fun getActiveTrade(ticker: String): com.scalping.assistant.data.repository.PortfolioTrade? {
@@ -609,6 +789,7 @@ class MainActivity : AppCompatActivity() {
             @android.webkit.JavascriptInterface
             fun onMoversData(jsonArray: String) {
                 try {
+                    Log.d("MOVERS_DATA_ARR", "onMoversData: " + jsonArray.take(300))
                     val arr = org.json.JSONArray(jsonArray)
                     val tickers = mutableListOf<String>()
                     val maxTickers = Math.min(arr.length(), 50) // Ambil hingga 50 emiten teraktif
@@ -631,7 +812,8 @@ class MainActivity : AppCompatActivity() {
 
             @android.webkit.JavascriptInterface
             fun onMoversDebug(msg: String) {
-                runOnUiThread { tvStatusLog.text = "Movers: $msg" }
+                runOnUiThread { tvStatusLog.text = msg }
+                Log.d("MOVERS_DEBUG", msg)
             }
 
             @android.webkit.JavascriptInterface
@@ -836,16 +1018,15 @@ class MainActivity : AppCompatActivity() {
         pagerAdapter = com.scalping.assistant.ui.RankingPagerAdapter(this)
         viewPager.adapter = pagerAdapter
 
-        // Setup callback TP/CL dari portfolio
+        // Setup callback TP/CL dari portfolio dengan pemilih harga riil
         pagerAdapter.portfolioFragment.onTakeProfit = { trade ->
-            orderBookRepo.closePortfolioTrade(trade.id)
-            val pnl = String.format("%+.2f", trade.pnlPercent).replace(',', '.')
-            Toast.makeText(this, "💰 Take Profit ${trade.ticker}: $pnl%! Posisi ditutup.", Toast.LENGTH_LONG).show()
+            showExitTradeDialog(trade, isTakeProfit = true)
         }
         pagerAdapter.portfolioFragment.onCutLoss = { trade ->
-            orderBookRepo.closePortfolioTrade(trade.id)
-            val pnl = String.format("%+.2f", trade.pnlPercent).replace(',', '.')
-            Toast.makeText(this, "🛑 Cut Loss ${trade.ticker}: $pnl%. Posisi ditutup.", Toast.LENGTH_LONG).show()
+            showExitTradeDialog(trade, isTakeProfit = false)
+        }
+        pagerAdapter.portfolioFragment.onDeleteTrade = { trade ->
+            showDeleteTradeDialog(trade)
         }
         pagerAdapter.portfolioFragment.onAiConsult = { trade ->
             val analysis = orderBookRepo.getAnalysisForTicker(trade.ticker)
@@ -922,14 +1103,13 @@ class MainActivity : AppCompatActivity() {
                             // Reset jika harga turun lagi, tapi kita pakai cooldown
                         }
 
-                        // SL Alert otomatis (Max 1x per 5 menit)
+                        // SL Alert otomatis: Cukup update pesan status log halus, jangan tampilkan Toast/Dialog yang mengganggu
                         if (trade.isActive && trade.currentPrice <= trade.stopLoss) {
                             val lastSL = notifiedSLTrades[trade.id] ?: 0L
-                            if (now - lastSL > cooldownMs) {
+                            val slCooldownMs = 30 * 60 * 1000L // 30 menit
+                            if (now - lastSL > slCooldownMs) {
                                 notifiedSLTrades[trade.id] = now
-                                Toast.makeText(this@MainActivity,
-                                    "🚨 STOP LOSS ${trade.ticker} TERTEMBUS! Pertimbangkan CUT LOSS segera!",
-                                    Toast.LENGTH_LONG).show()
+                                tvStatusLog.text = "🛑 Stop Loss ${trade.ticker} tertembus pada Rp ${trade.currentPrice}"
                             }
                         }
                     }
@@ -974,30 +1154,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ============================================================
-    // ALERTS & NOTIFICATIONS
+    // ALERTS & NOTIFICATIONS (NON-INTRUSIVE)
     // ============================================================
 
     private fun showBailoutAlert(ticker: String, reason: String) {
-        val builder = android.app.AlertDialog.Builder(this)
-        builder.setTitle("🚨 PERINGATAN GUYURAN — $ticker")
-        builder.setMessage(
-            "Terdeteksi tekanan jual masif pada $ticker dan harga sedang melemah.\n\n" +
-            "Alasan: $reason\n\n" +
-            "Perhatian: Pastikan ini BUKAN akumulasi bandar sebelum memutuskan. " +
-            "Cek apakah harga masih di atas support dan bid wall masih ada."
-        )
-        builder.setPositiveButton("Pantau Lebih") { dialog, _ -> dialog.dismiss() }
-        builder.setNegativeButton("Lihat Portfolio") { dialog, _ ->
-            dialog.dismiss()
-            navigateToPortfolioTab()
-        }
-        builder.show()
+        // HAPUS TOTAL POPUP DIALOG: Jangan pernah memunculkan dialog modal yang memblokir layar saat trading!
+        // Cukup tampilkan peringatan halus pada status bar di bawah
+        tvStatusLog.text = "⚠️ Tekanan Jual $ticker: $reason"
     }
 
     private fun showProbeLogDialog() {
         val items = synchronized(probeLogs) { probeLogs.reversed().toTypedArray() }
+        val (tickers, snaps) = if (::orderBookRepo.isInitialized) orderBookRepo.getSnapshotCacheInfo() else Pair(0, 0)
+        val title = "📡 Live Probe (${items.size}) • 💾 Cache ($tickers emiten / $snaps data)"
+
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("📡 Live Probe Logs (${items.size})")
+            .setTitle(title)
             .setItems(if (items.isEmpty()) arrayOf("Belum ada data WebSocket/SSE/Fetch tertangkap.\nSilakan pastikan Stockbit sudah login.") else items, null)
             .setPositiveButton("Tutup", null)
             .setNeutralButton("Salin Semua") { _, _ ->
@@ -1005,6 +1177,17 @@ class MainActivity : AppCompatActivity() {
                 val clip = android.content.ClipData.newPlainText("Probe Logs", items.joinToString("\n---\n"))
                 clipboard.setPrimaryClip(clip)
                 Toast.makeText(this, "Log disalin ke clipboard!", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("🗑️ Reset Snapshot") { _, _ ->
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Hapus Cache Snapshot?")
+                    .setMessage("Seluruh riwayat snapshot ($tickers emiten, $snaps data) akan dihapus dan sistem akan mengumpulkan data baru dari awal.")
+                    .setPositiveButton("Hapus") { _, _ ->
+                        orderBookRepo.clearAllSnapshots()
+                        Toast.makeText(this, "Cache snapshot telah di-reset!", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("Batal", null)
+                    .show()
             }
             .show()
     }
@@ -1034,8 +1217,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStop() {
+        super.onStop()
+        if (::orderBookRepo.isInitialized) {
+            orderBookRepo.saveSnapshots()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        if (::orderBookRepo.isInitialized) {
+            orderBookRepo.saveSnapshots()
+        }
         handler.removeCallbacks(scrapingRunnable)
         handler.removeCallbacks(sessionTimerRunnable)
         webView.destroy()

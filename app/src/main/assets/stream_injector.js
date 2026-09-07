@@ -28,24 +28,43 @@
 
         try {
             var cols = row.querySelectorAll('td');
-            if (cols.length >= 7) {
-                var timeText = cols[0].textContent || '';
-                var tickerText = cols[1].textContent || '';
-                var actionEl = cols[3].querySelector('p');
-                var lotEl = cols[4].querySelector('p');
-                
+            if (cols.length >= 5) {
+                var timeText = (cols[0].textContent || '').trim();
+                var tickerText = (cols[1].textContent || '').trim().toUpperCase();
+                var tickerFromKey = (rowKey.split('|')[0] || '').trim().toUpperCase();
+                var ticker = (tickerText && /^[A-Z]{2,5}$/.test(tickerText)) ? tickerText : tickerFromKey;
+
+                var priceText = cols.length > 2 ? (cols[2].textContent || '') : '';
+                var price = parseInt(priceText.replace(/[,.]/g, '').trim(), 10) || 0;
+
+                // Fallback scan harga jika cols[2] kosong
+                if (price <= 0) {
+                    for (var c = 1; c < cols.length; c++) {
+                        var cVal = (cols[c].textContent || '').replace(/[,.]/g, '').trim();
+                        var num = parseInt(cVal, 10);
+                        if (!isNaN(num) && num >= 1 && num <= 99000 && !cols[c].textContent.includes(':')) {
+                            price = num;
+                            break;
+                        }
+                    }
+                }
+
+                var actionEl = cols.length > 3 ? cols[3].querySelector('p') : null;
+                var actionText = actionEl ? (actionEl.textContent || '') : (cols.length > 3 ? cols[3].textContent || '' : '');
                 var actionType = actionEl ? actionEl.getAttribute('action') : null;
-                var isBuy = (actionType === '1' || (actionEl && actionEl.textContent === 'Buy'));
-                var isSell = (actionType === '2' || (actionEl && actionEl.textContent === 'Sell'));
-                
-                var lotStr = lotEl ? (lotEl.textContent || '') : '0';
-                var lot = parseInt(lotStr.replace(/,/g, ''), 10) || 0;
-                
-                if (tickerText && (isBuy || isSell) && lot > 0) {
+                var isBuy = (actionType === '1' || actionText.indexOf('Buy') >= 0 || actionText.indexOf('B') === 0);
+                var isSell = (actionType === '2' || actionText.indexOf('Sell') >= 0 || actionText.indexOf('S') === 0);
+
+                var lotEl = cols.length > 4 ? cols[4].querySelector('p') : null;
+                var lotStr = lotEl ? (lotEl.textContent || '') : (cols.length > 4 ? cols[4].textContent || '' : '0');
+                var lot = parseInt(lotStr.replace(/[,.]/g, '').trim(), 10) || 0;
+
+                if (ticker && (isBuy || isSell) && lot > 0) {
                     newTransactions.push({
                         id: rowKey,
-                        ticker: tickerText.trim(),
-                        time: timeText.trim(),
+                        ticker: ticker,
+                        time: timeText,
+                        price: price,
                         type: isBuy ? 'BUY' : 'SELL', // HAKA = BUY, HAKI = SELL
                         lot: lot
                     });

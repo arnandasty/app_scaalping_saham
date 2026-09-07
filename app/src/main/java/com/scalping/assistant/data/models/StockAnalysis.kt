@@ -37,6 +37,9 @@ data class BandarDetectorStat(
     val ticker: String,
     val accdistStatus: String = "Neutral", // "Big Acc", "Acc", "Neutral", "Dist", "Big Dist"
     val averagePrice: Double = 0.0,
+    val avgCalculationSource: String = "",  // e.g. "Dihitung dari Top Buyer: MG (Rp 123), AZ (Rp 125), BK (Rp 124)"
+    val bandarProfile: String = "NEUTRAL",  // "PURE_ACCUMULATION", "RETAIL_TRAP", "DISTRIBUTION", "SCALPER_ACTIVE", "NEUTRAL"
+    val bandarProfileLabel: String = "⚪ Aliran Seimbang",
     val amountRupiah: Long = 0L,
     val volumeLot: Long = 0L,
     val topBrokers: String = "",
@@ -44,6 +47,7 @@ data class BandarDetectorStat(
     val foreignFlow: String = "",           // "Asing Hari Ini: Big Acc (+Rp 2.1 M)"
     val foreignFlowMultiDay: String = "",   // "Asing 1 Minggu: Big Acc (+Rp 14.5 M)"
     val smartMoneySummary: String = "",     // "🟢 SMART MONEY ACCUMULATION (Asing serok barang dari ritel)"
+    val retailVsBandarSummary: String = "", // "Ritel: Net Sell Rp 2.4M | Bandar: Net Buy Rp 3.8M"
     val lastUpdated: Long = System.currentTimeMillis()
 )
 

@@ -21,8 +21,9 @@ object ScoringEngine {
         bandarDetector: com.scalping.assistant.data.models.BandarDetectorStat? = null
     ): StockAnalysis {
         val ticker = snapshot.ticker
-        val currentPrice = if (snapshot.lastPrice > 50) snapshot.lastPrice 
+        val currentPrice = if (snapshot.lastPrice > 0) snapshot.lastPrice 
                            else if (snapshot.offerLevels.isNotEmpty()) snapshot.offerLevels.first().price 
+                           else if (snapshot.bidLevels.isNotEmpty()) snapshot.bidLevels.first().price
                            else technical.lastClosePrice.toInt()
 
         // ============================================================
@@ -284,41 +285,72 @@ object ScoringEngine {
             }
         }
 
-        // F. Bandar Detector Score (-25 s/d +15)
+        // F. Bandar Detector Score (-30 s/d +20)
         var bandarScore = 0
         var isBandarBigAcc = false
         var isBandarAcc = false
         var isBandarDist = false
         var isBandarBigDist = false
+        var isRetailTrap = false
+        var isRetailMomentum = false
+        var isPureBandarAcc = false
+        var isScalperBandar = false
+
         if (bandarDetector != null) {
             when (bandarDetector.accdistStatus) {
                 "Big Acc" -> {
-                    bandarScore = 15
+                    bandarScore = 5
                     isBandarBigAcc = true
                 }
                 "Acc" -> {
-                    bandarScore = 8
+                    bandarScore = 3
                     isBandarAcc = true
                 }
                 "Dist" -> {
-                    bandarScore = -12
+                    bandarScore = -4
                     isBandarDist = true
                 }
                 "Big Dist" -> {
-                    bandarScore = -25
+                    bandarScore = -8
                     isBandarBigDist = true
                 }
             }
 
-            // Faktor Arus Broker Asing & Smart Money Flow
+            // Klasifikasi Ritel vs Bandar Nyata (Konteks Pendukung, Bukan Penentu Mutlak Scalping)
+            when (bandarDetector.bandarProfile) {
+                "RETAIL_TRAP" -> {
+                    // Perangkap ritel: Hanya diberi penalti ringan, keputusan scalping tetap di Tape Reading
+                    bandarScore -= 4
+                    isRetailTrap = true
+                }
+                "RETAIL_MOMENTUM" -> {
+                    // Momentum ritel ramai: Likuiditas tinggi untuk scalping cepat
+                    bandarScore += 2
+                    isRetailMomentum = true
+                }
+                "PURE_ACCUMULATION" -> {
+                    bandarScore += 4
+                    isPureBandarAcc = true
+                }
+                "SCALPER_ACTIVE" -> {
+                    bandarScore += 3
+                    isScalperBandar = true
+                }
+                "DISTRIBUTION" -> {
+                    bandarScore -= 5
+                    isBandarDist = true
+                }
+            }
+
+            // Faktor Arus Broker Asing & Smart Money Flow (Multi-day)
             if (bandarDetector.smartMoneySummary.contains("SMART MONEY ACCUMULATION") ||
                 bandarDetector.foreignFlow.contains("Big Acc") ||
                 bandarDetector.foreignFlowMultiDay.contains("Big Acc")) {
-                bandarScore += 6
+                bandarScore += 3
             } else if (bandarDetector.smartMoneySummary.contains("SMART MONEY DISTRIBUTION") ||
                 bandarDetector.foreignFlow.contains("Big Dist") ||
                 bandarDetector.foreignFlowMultiDay.contains("Big Dist")) {
-                bandarScore -= 8
+                bandarScore -= 4
             }
         }
 
@@ -395,19 +427,17 @@ object ScoringEngine {
         // 5F. ATURAN 2: Anti-Pucuk vs Super Momentum Exception
         // ============================================================
         val isHighPriceZone = snapshot.changePercent >= 7.0 && dropFromHigh < 0.02
-        val isTrulyBearish = (orderFlow.hasFakeWall && (!technical.isSupertrendBullish || effectiveTechScore < 10)) || isHakiMasif || isBandarBigDist
+        val isTrulyBearish = (orderFlow.hasFakeWall && (!technical.isSupertrendBullish || effectiveTechScore < 10)) || isHakiMasif || (dropFromHigh >= 0.035)
         val isAra = snapshot.araPrice > 0 && currentPrice >= snapshot.araPrice
         val isTooExpensive = currentPrice >= 2000
 
         // Syarat Mutlak Super Momentum (Ride the Wave):
         // 1. Bukan ARA & bukan harga > 2000
-        // 2. Bandar terkonfirmasi Akumulasi resmi (Big Acc atau Acc)
-        // 3. Dominasi HAKA mutlak (HAKA masif atau rasio HAKA/HAKI >= 2.0 atau delta volume >= 20)
-        // 4. Struktur orderbook kuat (ada bantalan tembok bid tebal atau stabilitas antrean >= 10)
-        // 5. Tren bukan bearish & bukan di bawah EMA 50
-        // 6. Skor AI memadai (>= 75)
+        // 2. Dominasi HAKA mutlak (HAKA masif atau rasio HAKA/HAKI >= 2.0 atau delta volume >= 20)
+        // 3. Struktur orderbook kuat (ada bantalan tembok bid tebal atau stabilitas antrean >= 10)
+        // 4. Tren bukan bearish & bukan di bawah EMA 50
+        // 5. Skor AI memadai (>= 75)
         val isSuperMomentum = isHighPriceZone && !isAra && !isTooExpensive &&
-                (isBandarBigAcc || isBandarAcc) &&
                 (isHakaMasif || (tapeReading != null && tapeReading.totalHakaLot > tapeReading.totalHakiLot * 2.0) || orderFlow.deltaVolumeScore >= 20) &&
                 (thickBidWall != null || orderFlow.stabilityScore >= 10) &&
                 !isTrulyBearish && !isBelowEma50
@@ -424,15 +454,12 @@ object ScoringEngine {
         var isTrapPullback = false
 
         if (isPulledBackFromHigh) {
-            if (isBandarBigDist || isBandarDist || isHakiMasif) {
-                // Guyuran bandar buang barang!
+            if (isHakiMasif || dropFromHigh >= 0.04) {
+                // Guyuran live buang barang!
                 isTrapPullback = true
-            } else if ((isBandarBigAcc || isBandarAcc || bandarDetector?.accdistStatus == "Neutral" || isHakaMasif) && (thickBidWall != null || technical.nearestSupport > 0)) {
-                val bandarModal = bandarDetector?.averagePrice ?: 0.0
-                if (bandarModal <= 0 || bandarModal >= currentPrice * 0.98) {
-                    // Pullback sehat teruji di bantalan support
-                    isValidPullback = true
-                }
+            } else if ((isHakaMasif || orderFlow.deltaVolumeScore >= 10) && (thickBidWall != null || technical.nearestSupport > 0)) {
+                // Pullback sehat teruji di bantalan support
+                isValidPullback = true
             }
         }
 
@@ -441,23 +468,26 @@ object ScoringEngine {
         val filteredScore = (finalScore + volumePenalty + ema50Penalty + dropPenalty + earlyMomentumBonus + superMomentumBonus).coerceIn(0, 100)
 
         // ============================================================
-        // 6. REKOMENDASI — Berdasarkan Prinsip Scalping Konsisten
+        // 6. REKOMENDASI — Berdasarkan Prinsip Scalping Konsisten (Orderbook & Tape Reading Realtime)
         // ============================================================
         val prevWasHighScore = prevRec == Recommendation.STRONG_BUY || prevRec == Recommendation.BUY
 
         var recommendation = when {
-            // FILTER: Saham ARA, harga >= 2000, atau jebakan guyuran/distribusi bandar langsung AVOID
-            isAra || isTooExpensive || isTrapPullback || isBandarBigDist -> Recommendation.AVOID
+            // FILTER: Saham ARA, harga >= 2000, atau jebakan guyuran tajam
+            isAra || isTooExpensive || isTrapPullback -> Recommendation.AVOID
+
+            // REALTIME GUYURAN: HAKI masif mendominasi mutlak
+            isHakiMasif -> Recommendation.AVOID
 
             // FILTER LAYER 2: Di bawah EMA 50 → maksimal WATCH (tidak bisa BUY/STRONG_BUY)
             isBelowEma50 && !isConfirmedBreakout -> Recommendation.WATCH
 
-            // ANTI-PUCUK: Saham nangkring di High >= 7% TANPA konfirmasi bandar HAKA langsung dikunci WATCH
-            isAtPucuk -> Recommendation.WATCH
-
-            // SUPER MOMENTUM: Saham laju terbang tinggi dengan HAKA masif & Big Acc bandar menuju ARA
-            isSuperMomentum && (isBandarBigAcc || isHakaMasif) && filteredScore >= 82 -> Recommendation.STRONG_BUY
+            // SUPER MOMENTUM: Saham laju terbang tinggi dengan HAKA masif menuju ARA
+            isSuperMomentum && isHakaMasif && filteredScore >= 80 -> Recommendation.STRONG_BUY
             isSuperMomentum -> Recommendation.BUY
+
+            // ANTI-PUCUK: Jika belum pernah BUY, saham nangkring di High >= 7% dilarang FOMO di pucuk
+            isAtPucuk && !prevWasHighScore -> Recommendation.WATCH
 
             // PULLBACK SEHAT: Koreksi teruji di bantalan support + bandar akumulasi → Rekomendasi BUY
             isValidPullback && filteredScore >= 65 && rrRatio >= 1.3 -> Recommendation.BUY
@@ -470,9 +500,12 @@ object ScoringEngine {
             (isHakaMasif || isBandarBigAcc) && filteredScore >= 80 && rrRatio >= 1.3 && !isTrulyBearish
                     && !hardDropBlock && !isAtPucuk -> Recommendation.STRONG_BUY
 
-            // Hysteresis STRONG BUY: Diperketat dari 65 → 72
-            prevRec == Recommendation.STRONG_BUY && filteredScore >= 72 && !isTrulyBearish
+            // Hysteresis STRONG BUY: Pertahankan Strong Buy jika skor masih >= 70
+            prevRec == Recommendation.STRONG_BUY && filteredScore >= 70 && !isTrulyBearish
                     && !hardDropBlock && !isAtPucuk -> Recommendation.STRONG_BUY
+
+            // BUY (Scalping Kilat Ritel Ramai): Jika momentum ritel ramai dengan HAKA masif & skor >= 72
+            isRetailMomentum && filteredScore >= 72 && (isHakaMasif || orderFlow.deltaVolumeScore >= 18) && !isAtPucuk -> Recommendation.BUY
 
             // BUY: Saham Akan Naik / threshold >= 75
             filteredScore >= 75 && rrRatio >= 1.3 && !isTrulyBearish && snapshotCount >= 5 && !isAtPucuk -> Recommendation.BUY
@@ -480,13 +513,13 @@ object ScoringEngine {
             // Early Momentum (Akan Naik) dengan skor >= 68 bisa BUY
             isEarlyMomentum && filteredScore >= 68 && rrRatio >= 1.3 && !isTrulyBearish && !isAtPucuk -> Recommendation.BUY
 
-            // Hysteresis BUY
-            (prevRec == Recommendation.BUY || prevRec == Recommendation.STRONG_BUY)
-                    && filteredScore >= 52 && !isTrulyBearish && !isAtPucuk -> Recommendation.BUY
+            // Hysteresis BUY: Jika sebelumnya BUY, pertahankan BUY sampai skor drop < 50 (selama bukan guyuran/distribusi)
+            prevWasHighScore && filteredScore >= 50 && !isTrulyBearish && !hardDropBlock -> Recommendation.BUY
 
-            // WATCH
-            filteredScore >= 52 -> Recommendation.WATCH
-            // Hysteresis WATCH: Bertahan sampai 35 sebelum ke AVOID
+            // WATCH: Threshold 48, dengan Hysteresis bertahan sampai 38 sebelum ke AVOID
+            filteredScore >= 48 -> Recommendation.WATCH
+            prevRec == Recommendation.WATCH && filteredScore >= 38 && !isTrulyBearish -> Recommendation.WATCH
+
             else -> Recommendation.AVOID
         }
 
@@ -494,7 +527,9 @@ object ScoringEngine {
         // 7. GAYA TRADING & ALASAN REKOMENDASI AI (TERPRIORITAS & AKURAT)
         // ============================================================
         val style = when {
+            isRetailMomentum && (isHakaMasif || orderFlow.deltaVolumeScore >= 18) -> "Scalping Kilat (Ritel Ramai)"
             isSuperMomentum -> "Super Momentum (Ride the Wave)"
+            isAtPucuk && prevWasHighScore -> "Trailing Profit (Ride the Gain)"
             isAtPucuk -> "Anti-Pucuk (Tunggu Pullback)"
             isValidPullback -> "Buy on Pullback (Bantalan Support)"
             isEarlyMomentum -> "Early Momentum (Akan Naik)"
@@ -520,6 +555,7 @@ object ScoringEngine {
         // 1. ALASAN UTAMA (PRIMARY REASON) — Menjadi alasan nomor 1 di kartu & detail
         val primaryReason = when (recommendation) {
             Recommendation.AVOID -> when {
+                isRetailTrap -> "🚨 AVOID: Terdeteksi PERANGKAP RITEL! Pembeli teratas didominasi broker ritel, rawan diguyur bandar!"
                 isBandarBigDist || isBandarDist -> "⛔ AVOID: Terdeteksi Distribusi Bandar (${bandarDetector?.accdistStatus ?: "Big Dist"}). Rawan guyuran tajam!"
                 isTrapPullback -> "🚨 AVOID: Jebakan Pullback! Penurunan harga disertai tekanan jual/distribusi."
                 isAra -> "⛔ AVOID: Saham sudah mentok batas ARA (Auto Reject Atas)."
@@ -528,6 +564,8 @@ object ScoringEngine {
                 else -> "⛔ AVOID: Skor momentum & orderflow tidak memenuhi kriteria scalping ($filteredScore/100)."
             }
             Recommendation.WATCH -> when {
+                isRetailTrap -> "⚠️ WATCH: Pembelian didominasi broker ritel. Tahan entri sampai ada akumulasi bandar nyata!"
+                isRetailMomentum -> "🔍 WATCH: Saham ramai ditransaksikan broker ritel. Tunggu volume HAKA meledak untuk konfirmasi scalping kilat."
                 isAtPucuk -> "🛑 WATCH: Saham sudah naik tinggi (+${String.format("%.1f", snapshot.changePercent)}%) di area pucuk! Dilarang FOMO — tunggu pullback."
                 isBelowEma50 && technical.ema50 > 0 -> "📉 WATCH: Harga di bawah EMA 50 (${formatPrice(technical.ema50.toInt())}) tren mayor bearish. Menunggu konfirmasi breakout."
                 hardDropBlock -> "🔻 WATCH: Harga terkoreksi ${String.format("%.1f", dropFromHigh * 100)}% dari high. Menunggu stabilisasi."
@@ -537,7 +575,9 @@ object ScoringEngine {
             }
             Recommendation.STRONG_BUY, Recommendation.BUY -> when {
                 isSuperMomentum -> "🚀 ${recommendation.label}: Super Momentum (Ride the Wave) +${String.format("%.1f", snapshot.changePercent)}%! HAKA masif & bandar akumulasi menuju ARA!"
+                isAtPucuk && prevWasHighScore -> "🚀 ${recommendation.label}: Trailing Profit (Ride the Gain) +${String.format("%.1f", snapshot.changePercent)}%! Pasang trailing stop dekat support."
                 isEarlyMomentum -> "🚀 ${recommendation.label}: Early Momentum (Akan Naik) +${String.format("%.1f", snapshot.changePercent)}% didukung akumulasi aktif!"
+                isRetailMomentum -> "⚡ ${recommendation.label}: Scalping Kilat! Saham ramai didorong broker ritel (+${String.format("%.1f", snapshot.changePercent)}%). Amankan profit 1-3 tick!"
                 isValidPullback -> {
                     val modalStr = if ((bandarDetector?.averagePrice ?: 0.0) > 0) " (Modal Bandar: Rp ${formatPrice(bandarDetector!!.averagePrice.toInt())})" else ""
                     "🎯 ${recommendation.label}: Pullback Sehat tertahan di bantalan Support$modalStr! Potensi pantulan kembali."
@@ -550,6 +590,9 @@ object ScoringEngine {
         }
 
         reasons.add(primaryReason)
+        if (isRetailMomentum) {
+            warnings.add("⚡ Catatan Scalper: Top buyer didominasi broker ritel. Disiplin TP cepat 1-3 tick & pasang trailing stop!")
+        }
 
         // 2. FAKTOR PENDUKUNG ORDERFLOW (Bebas dari kontradiksi Akumulasi vs Distribusi)
         val filteredOfDetails = orderFlow.details.filter { d ->
@@ -639,7 +682,18 @@ object ScoringEngine {
             reasons.add("🧱 Terdapat tembok offer tebal di Rp ${formatPrice(thickWallLevel.price)}. Waspada area ini.")
         }
 
-        // 6. PERINGATAN RISIKO (WARNINGS)
+        // 6. PERINGATAN RISIKO (WARNINGS) & PROFIL BROKER BANDAR
+        if (isRetailTrap) {
+            warnings.add("⚠️ PERANGKAP RITEL (FAKE ACC): Pembeli teratas didominasi broker ritel. Rawan guyuran dari bandar!")
+        }
+        if (isPureBandarAcc) {
+            reasons.add("🔥 AKUMULASI BANDAR MURNI: Broker bandar/asing agresif serok barang dari ritel yang panik!")
+        }
+        if (isScalperBandar) {
+            reasons.add("⚡ BANDAR SCALPER AKTIF: Broker scalper (MG/CP/AZ) terdeteksi di top buyer. Gerakan sangat cepat!")
+            warnings.add("⚡ Peringatan Scalper Bandar: Volatilitas tinggi, jangan hold lama — disiplin Take Profit kilat!")
+        }
+
         if (isSuperMomentum) {
             warnings.add("⚡ PERINGATAN SUPER MOMENTUM: Kereta cepat menuju ARA. Wajib disiplin Stop Loss ketat di Rp ${formatPrice(effectiveStopLoss)} (1-2 tik)!")
         }

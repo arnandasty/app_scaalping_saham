@@ -25,6 +25,7 @@ class PortfolioFragment : Fragment() {
     var onTakeProfit: ((PortfolioTrade) -> Unit)? = null
     var onCutLoss: ((PortfolioTrade) -> Unit)? = null
     var onAiConsult: ((PortfolioTrade) -> Unit)? = null
+    var onDeleteTrade: ((PortfolioTrade) -> Unit)? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -38,7 +39,8 @@ class PortfolioFragment : Fragment() {
         portfolioAdapter = PortfolioAdapter(
             onTakeProfit = { trade -> onTakeProfit?.invoke(trade) },
             onCutLoss = { trade -> onCutLoss?.invoke(trade) },
-            onAiConsult = { trade -> onAiConsult?.invoke(trade) }
+            onAiConsult = { trade -> onAiConsult?.invoke(trade) },
+            onDeleteTrade = { trade -> onDeleteTrade?.invoke(trade) }
         )
 
         rvPortfolio.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(requireContext())

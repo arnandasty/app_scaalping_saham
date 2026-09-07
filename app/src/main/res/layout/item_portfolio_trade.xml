@@ -114,6 +114,7 @@
                 android:orientation="vertical">
 
                 <TextView
+                    android:id="@+id/tvPortfolioCurrentPriceLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Harga Kini"
@@ -137,6 +138,7 @@
                 android:orientation="vertical">
 
                 <TextView
+                    android:id="@+id/tvPortfolioTargetLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Target TP"
@@ -170,6 +172,7 @@
                 android:orientation="vertical">
 
                 <TextView
+                    android:id="@+id/tvPortfolioSLLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Stop Loss"
@@ -274,6 +277,18 @@
                 android:textSize="11sp"
                 android:textStyle="bold" />
         </LinearLayout>
+
+        <!-- Tombol Hapus Riwayat (Hanya muncul di Tab Track Record) -->
+        <Button
+            android:id="@+id/btnPortfolioDelete"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="32dp"
+            android:layout_marginTop="6dp"
+            android:text="🗑️ Hapus dari Track Record"
+            android:textColor="@color/text_muted"
+            android:textSize="10sp"
+            android:visibility="gone" />
 
     </LinearLayout>
 </androidx.cardview.widget.CardView>
