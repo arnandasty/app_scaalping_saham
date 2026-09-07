@@ -127,6 +127,14 @@
             var container = document.querySelector('#widget-container');
             var scope = container || document;
 
+            if (window.Android && window.Android.onMoversDebug) {
+                var allTrs = document.querySelectorAll('tr').length;
+                var allImgs = document.querySelectorAll('img[src*="/logos/companies/"]').length;
+                var allLinks = document.querySelectorAll('a[href*="/symbol/"]').length;
+                var hasWidgetContainer = !!document.querySelector('#widget-container');
+                window.Android.onMoversDebug('DEBUG_DOM: url=' + window.location.pathname + ' tr=' + allTrs + ' img=' + allImgs + ' link=' + allLinks + ' wCont=' + hasWidgetContainer);
+            }
+
             // Scroll perlahan agar elemen virtual list terisi
             var scrollElem = container || document.querySelector('#widget-container') || document.querySelector('[class*="widget-container"]') || document.querySelector('tbody');
             if (scrollElem && scrollElem.scrollTop < 250) {
@@ -160,15 +168,15 @@
                 var changePct = 0.0;
                 var turnoverStr = "";
 
-                // 1. Ekstrak Price HANYA dari td[1] atau td[2] (Kolom Harga di Stockbit)
-                // JANGAN pernah mencari harga di td[3..n] karena itu adalah kolom Open, High, Low, Vol, Val!
-                for (var colIdx = 1; colIdx <= Math.min(2, tds.length - 1); colIdx++) {
+                // 1. Ekstrak Price dari td[1], td[2], atau td[3]
+                // Stockbit sering menggabungkan Price dan % di satu cell (misal: "185 +5 (+2.78%)")
+                for (var colIdx = 1; colIdx <= Math.min(3, tds.length - 1); colIdx++) {
                     var priceCellText = (tds[colIdx].innerText || '').trim();
-                    if (priceCellText.includes('%') || /open|high|low|vol|val/i.test(priceCellText)) continue;
+                    if (/^(open|high|low|vol|val|volume|turnover|market\s*cap)$/i.test(priceCellText)) continue;
                     var pTokens = priceCellText.split(/\s+/);
                     for (var pt = 0; pt < pTokens.length; pt++) {
                         var pTok = pTokens[pt].trim();
-                        // Reject jika token adalah perubahan harga (+/-), persentase, atau teks
+                        // Reject jika token adalah perubahan harga (+/-), persentase murni, tanda kurung, atau teks
                         if (pTok.startsWith('+') || pTok.startsWith('-') || pTok.includes('%') || pTok.startsWith('(') || /[a-zA-Z]/.test(pTok)) continue;
                         var pClean = pTok.replace(/[.,]/g, '');
                         var pVal = parseInt(pClean, 10);
@@ -207,7 +215,6 @@
             logoImgs.forEach(function(img) {
                 var ticker = (img.getAttribute('alt') || '').trim().toUpperCase();
                 if (!ticker || !/^[A-Z]{2,5}$/.test(ticker) || seen[ticker]) return;
-                seen[ticker] = true;
 
                 var price = 0;
                 var changePct = 0;
@@ -217,9 +224,9 @@
                 if (row) {
                     var tds = row.querySelectorAll('td');
                     if (tds.length >= 2) {
-                        for (var colIdx = 1; colIdx <= Math.min(2, tds.length - 1); colIdx++) {
+                        for (var colIdx = 1; colIdx <= Math.min(3, tds.length - 1); colIdx++) {
                             var cellText = (tds[colIdx].innerText || '').trim();
-                            if (cellText.includes('%') || /open|high|low|vol|val/i.test(cellText)) continue;
+                            if (/^(open|high|low|vol|val|volume|turnover|market\s*cap)$/i.test(cellText)) continue;
                             var tokens = cellText.split(/\s+/);
                             for (var k = 0; k < tokens.length; k++) {
                                 var t = tokens[k].trim();
@@ -248,13 +255,16 @@
                     }
                 }
 
-                currentScraped.push({
-                    ticker: ticker,
-                    lastPrice: price,
-                    changePercent: changePct,
-                    turnover: turnoverStr,
-                    source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
-                });
+                if (ticker && price > 0) {
+                    seen[ticker] = true;
+                    currentScraped.push({
+                        ticker: ticker,
+                        lastPrice: price,
+                        changePercent: changePct,
+                        turnover: turnoverStr,
+                        source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
+                    });
+                }
             });
 
             // Fallback link /symbol/
@@ -264,14 +274,47 @@
                     var href = link.getAttribute('href') || '';
                     var m = href.match(/\/symbol\/([A-Z]{2,5})/);
                     if (m && !seen[m[1]]) {
-                        seen[m[1]] = true;
-                        currentScraped.push({
-                            ticker: m[1],
-                            lastPrice: 0,
-                            changePercent: 0,
-                            turnover: "",
-                            source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
-                        });
+                        var ticker = m[1];
+                        var price = 0;
+                        var changePct = 0.0;
+                        var turnoverStr = "";
+                        var row = link.closest('tr');
+                        if (row) {
+                            var tds = row.querySelectorAll('td');
+                            for (var colIdx = 1; colIdx <= Math.min(3, tds.length - 1); colIdx++) {
+                                var cellText = (tds[colIdx].innerText || '').trim();
+                                if (/^(open|high|low|vol|val|volume|turnover|market\s*cap)$/i.test(cellText)) continue;
+                                var tokens = cellText.split(/\s+/);
+                                for (var k = 0; k < tokens.length; k++) {
+                                    var t = tokens[k].trim();
+                                    if (t.startsWith('+') || t.startsWith('-') || t.includes('%') || t.startsWith('(') || /[a-zA-Z]/.test(t)) continue;
+                                    var clean = t.replace(/[.,]/g, '');
+                                    var val = parseInt(clean, 10);
+                                    if (!isNaN(val) && val >= 1 && val <= 99000) {
+                                        price = val;
+                                        break;
+                                    }
+                                }
+                                if (price > 0) break;
+                            }
+                            for (var c = 1; c < tds.length; c++) {
+                                var cCell = (tds[c].innerText || '').trim();
+                                var valMatch = cCell.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
+                                if (valMatch && !turnoverStr) turnoverStr = valMatch[0];
+                                var pctMatch = cCell.match(/([+-]?\d+[.,]\d+)%/);
+                                if (pctMatch && changePct === 0.0) changePct = parseFloat(pctMatch[1].replace(',', '.'));
+                            }
+                        }
+                        if (price > 0) {
+                            seen[ticker] = true;
+                            currentScraped.push({
+                                ticker: ticker,
+                                lastPrice: price,
+                                changePercent: changePct,
+                                turnover: turnoverStr,
+                                source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
+                            });
+                        }
                     }
                 });
             }

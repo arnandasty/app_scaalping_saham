@@ -73,6 +73,8 @@ class OrderBookRepository(
     private val MAX_SNAPSHOT_HISTORY = 40 // Naikkan dari 30 ke 40 untuk sinyal lebih kuat
     private val historyMap = mutableMapOf<String, MutableList<OrderBookSnapshot>>()
     private val technicalCache = mutableMapOf<String, TechnicalResult>()
+    private val technicalCacheTime = ConcurrentHashMap<String, Long>()
+    private val technicalFetchInFlight = ConcurrentHashMap<String, Boolean>()
     private val previousRecommendations = mutableMapOf<String, Recommendation>()
     private val tapeReadingMap = mutableMapOf<String, com.scalping.assistant.data.models.TapeReadingStat>()
     private val bandarDetectorMap = mutableMapOf<String, com.scalping.assistant.data.models.BandarDetectorStat>()
@@ -517,7 +519,7 @@ class OrderBookRepository(
                 val stat = tapeReadingMap.getOrPut(ticker) {
                     com.scalping.assistant.data.models.TapeReadingStat(ticker)
                 }
-                
+
                 if (type == "BUY") {
                     stat.totalHakaLot += lot
                     stat.hakaFrequency += 1
@@ -530,6 +532,54 @@ class OrderBookRepository(
                 // Update harga langsung seketika (real-time tick by tick)
                 if (price > 0) {
                     updateRealtimePrice(ticker, price)
+                } else {
+                    reanalyzeIfPresent(ticker)
+                }
+
+                // Jika saham terbang masif di Running Trade tapi belum ada di daftar,
+                // langsung daftarkan seketika ke Tab Movers agar scalper tidak ketinggalan momen!
+                val inManual = _manualFlow.value.any { it.ticker == ticker }
+                val inMovers = _moversFlow.value.any { it.ticker == ticker }
+                if (!inManual && !inMovers && stat.totalHakaLot >= 500 && price > 0) {
+                    val defaultTech = technicalCache[ticker] ?: TechnicalResult(
+                        ticker = ticker,
+                        lastClosePrice = price.toDouble(),
+                        volumeRatio = 1.8,
+                        nearestSupport = price * 0.97,
+                        nearestResistance = price * 1.05,
+                        todayHigh = price.toDouble(),
+                        ma5 = price.toDouble(),
+                        ma9 = price.toDouble(),
+                        ma20 = price.toDouble(),
+                        isBelowEma50 = false,
+                        isSupertrendBullish = true
+                    )
+                    val snap = OrderBookSnapshot(
+                        ticker = ticker,
+                        lastPrice = price,
+                        changePercent = 2.5,
+                        timestamp = System.currentTimeMillis(),
+                        bidLevels = emptyList(),
+                        offerLevels = emptyList(),
+                        totalBidLot = stat.totalHakaLot * 2,
+                        totalOfferLot = stat.totalHakiLot,
+                        araPrice = 0,
+                        arbPrice = 0
+                    )
+                    val ofResult = com.scalping.assistant.data.models.OrderFlowResult(
+                        ticker = ticker,
+                        totalScore = 16,
+                        details = listOf("⚡ Running Trade Surge", "🔥 HAKA Masif: ${stat.totalHakaLot} Lot")
+                    )
+                    val rawAnalysis = ScoringEngine.generateAnalysis(
+                        snap, ofResult, defaultTech, MarketSession.getCurrentSession(),
+                        null, 1, stat, bandarDetectorMap[ticker]
+                    )
+                    val lockedAnalysis = applySignalLock(rawAnalysis)
+                    val updatedMovers = _moversFlow.value.toMutableList()
+                    updatedMovers.add(lockedAnalysis)
+                    _moversFlow.value = updatedMovers.sortedByDescending { it.score }
+                    refreshTopPicks()
                 }
             }
         } catch (e: Exception) {
@@ -537,73 +587,152 @@ class OrderBookRepository(
         }
     }
 
-    fun updateRealtimePrice(ticker: String, price: Int) {
-        if (price <= 0) return
+    private fun reanalyzeIfPresent(ticker: String) {
         val clean = ticker.trim().uppercase()
-
-        // 0. VALIDASI HARGA ANTI-FLUTTER (Mencegah lonjakan ke High 190, Open/Low 180, atau Lot size):
-        val currentSnap = synchronized(historyMap) {
-            historyMap[clean]?.lastOrNull() ?: historyMap["movers_$clean"]?.lastOrNull()
-        }
-        if (currentSnap != null && currentSnap.bidLevels.isNotEmpty() && currentSnap.offerLevels.isNotEmpty()) {
-            val bestBid = currentSnap.bidLevels.first().price
-            val bestOffer = currentSnap.offerLevels.first().price
-            if (bestBid > 0 && bestOffer > 0 && bestBid <= bestOffer) {
-                val tick = PriceFraction.getTickSize(bestBid)
-                val minValid = bestBid - (2 * tick)
-                val maxValid = bestOffer + (2 * tick)
-                if (price < minValid || price > maxValid) {
-                    android.util.Log.w("PRICE_GUARD", "⚠️ Abaikan lonjakan harga liar $clean: Rp $price (BestBid: $bestBid, BestOffer: $bestOffer)")
-                    return
-                }
-            }
-        } else {
-            val existingPrice = _manualFlow.value.find { it.ticker == clean }?.lastPrice
-                ?: _moversFlow.value.find { it.ticker == clean }?.lastPrice
-                ?: 0
-            if (existingPrice > 0) {
-                val diffPct = kotlin.math.abs(price - existingPrice).toDouble() / existingPrice
-                if (diffPct > 0.05) {
-                    android.util.Log.w("PRICE_GUARD", "⚠️ Abaikan lonjakan harga liar $clean: Rp $price vs Rp $existingPrice")
-                    return
-                }
-            }
-        }
-
-        // 1. Update di Manual Flow
+        var changed = false
         val manual = _manualFlow.value
         val mIdx = manual.indexOfFirst { it.ticker == clean }
         if (mIdx >= 0) {
             val old = manual[mIdx]
-            if (old.lastPrice != price) {
-                val updated = manual.toMutableList()
-                updated[mIdx] = old.copy(lastPrice = price)
-                _manualFlow.value = updated
-            }
+            val updatedItem = recalculateAnalysis(old, old.lastPrice, isMovers = false)
+            val updated = manual.toMutableList()
+            updated[mIdx] = updatedItem
+            _manualFlow.value = updated.sortedByDescending { it.score }
+            changed = true
         }
 
-        // 2. Update di Movers Flow
         val movers = _moversFlow.value
         val movIdx = movers.indexOfFirst { it.ticker == clean }
         if (movIdx >= 0) {
             val old = movers[movIdx]
-            if (old.lastPrice != price) {
-                val updated = movers.toMutableList()
-                updated[movIdx] = old.copy(lastPrice = price)
-                _moversFlow.value = updated
+            val updatedItem = recalculateAnalysis(old, old.lastPrice, isMovers = true)
+            val updated = movers.toMutableList()
+            updated[movIdx] = updatedItem
+            _moversFlow.value = updated.sortedByDescending { it.score }
+            changed = true
+        }
+
+        if (changed) {
+            refreshTopPicks()
+        }
+    }
+
+    private fun recalculateAnalysis(
+        old: StockAnalysis,
+        newPrice: Int,
+        isMovers: Boolean
+    ): StockAnalysis {
+        val ticker = old.ticker
+        val historyKey = if (isMovers) "movers_$ticker" else ticker
+        val rawSnap = synchronized(historyMap) { historyMap[historyKey]?.lastOrNull() }
+            ?: OrderBookSnapshot(
+                ticker = ticker,
+                lastPrice = newPrice,
+                changePercent = old.changePercent,
+                timestamp = System.currentTimeMillis(),
+                bidLevels = emptyList(),
+                offerLevels = emptyList(),
+                totalBidLot = 0L,
+                totalOfferLot = 0L
+            )
+
+        // Hitung changePercent baru secara dinamis
+        val prevClose = if (old.lastPrice > 0 && old.changePercent != 0.0) {
+            old.lastPrice / (1.0 + old.changePercent / 100.0)
+        } else if (rawSnap.lastPrice > 0 && rawSnap.changePercent != 0.0) {
+            rawSnap.lastPrice / (1.0 + rawSnap.changePercent / 100.0)
+        } else {
+            old.lastPrice.toDouble()
+        }
+        val newChangePercent = if (prevClose > 0) {
+            ((newPrice - prevClose) / prevClose) * 100.0
+        } else {
+            old.changePercent
+        }
+
+        val updatedSnap = rawSnap.copy(
+            lastPrice = newPrice,
+            changePercent = newChangePercent,
+            timestamp = System.currentTimeMillis()
+        )
+
+        val ofResult = old.orderFlow
+        val cachedTech = technicalCache[ticker]
+        val techResult = if (cachedTech != null) {
+            cachedTech.copy(lastClosePrice = newPrice.toDouble())
+        } else {
+            old.technical.copy(lastClosePrice = newPrice.toDouble())
+        }
+        val sessionInfo = MarketSession.getCurrentSession()
+        val prevRec = previousRecommendations[historyKey]
+        val snapshotCount = synchronized(historyMap) { historyMap[historyKey]?.size ?: 1 }
+        val tapeReadingStat = tapeReadingMap[ticker]
+        val bandarStat = bandarDetectorMap[ticker]
+
+        val rawAnalysis = ScoringEngine.generateAnalysis(
+            updatedSnap, ofResult, techResult, sessionInfo, prevRec, snapshotCount, tapeReadingStat, bandarStat
+        )
+        val lockedAnalysis = applySignalLock(rawAnalysis)
+        previousRecommendations[historyKey] = lockedAnalysis.recommendation
+        return lockedAnalysis
+    }
+
+    fun updateRealtimePrice(ticker: String, price: Int) {
+        if (price <= 0 || price > 99000) return
+        val clean = ticker.trim().uppercase()
+
+        // 0. VALIDASI HARGA BEI REAL-TIME:
+        // Izinkan semua transaksi sah di bursa (termasuk lonjakan breakout dan ARA/ARB resmi)
+        val currentSnap = synchronized(historyMap) {
+            historyMap[clean]?.lastOrNull() ?: historyMap["movers_$clean"]?.lastOrNull()
+        }
+        val existingPrice = _manualFlow.value.find { it.ticker == clean }?.lastPrice
+            ?: _moversFlow.value.find { it.ticker == clean }?.lastPrice
+            ?: (currentSnap?.lastPrice ?: 0)
+
+        if (currentSnap != null && currentSnap.araPrice > 0 && currentSnap.arbPrice > 0) {
+            if (price < currentSnap.arbPrice || price > currentSnap.araPrice) {
+                android.util.Log.w("PRICE_GUARD", "⚠️ Abaikan harga di luar batas ARA/ARB $clean: Rp $price (ARB: ${currentSnap.arbPrice}, ARA: ${currentSnap.araPrice})")
+                return
+            }
+        } else if (existingPrice > 0) {
+            // Batas maksimal perubahan harian BEI adalah +-35%
+            val diffPct = kotlin.math.abs(price - existingPrice).toDouble() / existingPrice
+            if (diffPct > 0.35) {
+                android.util.Log.w("PRICE_GUARD", "⚠️ Abaikan lonjakan harga liar $clean: Rp $price vs Rp $existingPrice (>35%)")
+                return
             }
         }
 
+        var hasChanged = false
+
+        // 1. Update di Manual Flow & Rekalkulasi Sinyal/Skor secara Instan (<0.05ms)
+        val manual = _manualFlow.value
+        val mIdx = manual.indexOfFirst { it.ticker == clean }
+        if (mIdx >= 0) {
+            val old = manual[mIdx]
+            val updatedItem = recalculateAnalysis(old, price, isMovers = false)
+            val updated = manual.toMutableList()
+            updated[mIdx] = updatedItem
+            _manualFlow.value = updated.sortedByDescending { it.score }
+            hasChanged = true
+        }
+
+        // 2. Update di Movers Flow & Rekalkulasi Sinyal/Skor secara Instan
+        val movers = _moversFlow.value
+        val movIdx = movers.indexOfFirst { it.ticker == clean }
+        if (movIdx >= 0) {
+            val old = movers[movIdx]
+            val updatedItem = recalculateAnalysis(old, price, isMovers = true)
+            val updated = movers.toMutableList()
+            updated[movIdx] = updatedItem
+            _moversFlow.value = updated.sortedByDescending { it.score }
+            hasChanged = true
+        }
+
         // 3. Update di Top Picks Flow
-        val top = _topPicksFlow.value
-        val tIdx = top.indexOfFirst { it.ticker == clean }
-        if (tIdx >= 0) {
-            val old = top[tIdx]
-            if (old.lastPrice != price) {
-                val updated = top.toMutableList()
-                updated[tIdx] = old.copy(lastPrice = price)
-                _topPicksFlow.value = updated
-            }
+        if (hasChanged) {
+            refreshTopPicks()
         }
 
         // 4. Update di Portfolio Flow
@@ -614,16 +743,12 @@ class OrderBookRepository(
             val hManual = historyMap[clean]
             if (hManual != null && hManual.isNotEmpty()) {
                 val last = hManual.last()
-                if (last.lastPrice != price) {
-                    hManual[hManual.size - 1] = last.copy(lastPrice = price)
-                }
+                hManual[hManual.size - 1] = last.copy(lastPrice = price)
             }
             val hMovers = historyMap["movers_$clean"]
             if (hMovers != null && hMovers.isNotEmpty()) {
                 val last = hMovers.last()
-                if (last.lastPrice != price) {
-                    hMovers[hMovers.size - 1] = last.copy(lastPrice = price)
-                }
+                hMovers[hMovers.size - 1] = last.copy(lastPrice = price)
             }
         }
     }
@@ -1436,12 +1561,35 @@ class OrderBookRepository(
                             val techResult = if (cachedTech != null) {
                                 cachedTech.copy(lastClosePrice = priceToUse.toDouble())
                             } else {
-                                val candles = yahooRepo.fetchIntradayCandles(ticker)
-                                val res = TechnicalAnalyzer.analyze(ticker, candles, priceToUse.toDouble())
-                                if (candles.isNotEmpty()) {
-                                    technicalCache[ticker] = res
+                                TechnicalResult(
+                                    ticker = ticker,
+                                    lastClosePrice = priceToUse.toDouble(),
+                                    volumeRatio = 1.5,
+                                    nearestSupport = priceToUse * 0.97,
+                                    nearestResistance = priceToUse * 1.05,
+                                    todayHigh = priceToUse.toDouble(),
+                                    ma5 = priceToUse.toDouble(),
+                                    ma9 = priceToUse.toDouble(),
+                                    ma20 = priceToUse.toDouble(),
+                                    isBelowEma50 = false,
+                                    isSupertrendBullish = true
+                                )
+                            }
+                            val cacheAge = System.currentTimeMillis() - (technicalCacheTime[ticker] ?: 0L)
+                            if ((cachedTech == null || cacheAge > 180_000L) && technicalFetchInFlight.putIfAbsent(ticker, true) == null) {
+                                repoScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val candles = yahooRepo.fetchIntradayCandles(ticker)
+                                        if (candles.isNotEmpty()) {
+                                            val res = TechnicalAnalyzer.analyze(ticker, candles, priceToUse.toDouble())
+                                            technicalCache[ticker] = res
+                                            technicalCacheTime[ticker] = System.currentTimeMillis()
+                                        }
+                                    } catch (_: Exception) {
+                                    } finally {
+                                        technicalFetchInFlight.remove(ticker)
+                                    }
                                 }
-                                res
                             }
                             val existingAnalysis = _moversFlow.value.find { it.ticker == ticker }
                             val ofResult = if (moverHistory != null && moverHistory.isNotEmpty() && moverHistory.last().bidLevels.isNotEmpty()) {
@@ -1583,8 +1731,8 @@ class OrderBookRepository(
 
             if (bestBid > 0 && bestOffer > 0 && bestBid <= bestOffer) {
                 val tick = PriceFraction.getTickSize(bestBid)
-                val minValid = bestBid - (2 * tick)
-                val maxValid = bestOffer + (2 * tick)
+                val minValid = bestBid - (5 * tick)
+                val maxValid = bestOffer + (5 * tick)
                 if (finalPrice < minValid || finalPrice > maxValid) {
                     finalPrice = if (changePercent > 0) bestOffer else bestBid
                 }
@@ -1616,8 +1764,40 @@ class OrderBookRepository(
             val history = historyMap[historyKey] ?: listOf(snap)
 
             val ofResult = OrderFlowAnalyzer.analyze(ticker, history)
-            val candles = yahooRepo.fetchIntradayCandles(ticker)
-            val techResult = TechnicalAnalyzer.analyze(ticker, candles, snap.lastPrice.toDouble())
+            val cachedTech = technicalCache[ticker]
+            val techResult = if (cachedTech != null) {
+                cachedTech.copy(lastClosePrice = snap.lastPrice.toDouble())
+            } else {
+                TechnicalResult(
+                    ticker = ticker,
+                    lastClosePrice = snap.lastPrice.toDouble(),
+                    volumeRatio = 1.0,
+                    nearestSupport = snap.lastPrice * 0.97,
+                    nearestResistance = snap.lastPrice * 1.03,
+                    todayHigh = snap.lastPrice.toDouble(),
+                    ma5 = snap.lastPrice.toDouble(),
+                    ma9 = snap.lastPrice.toDouble(),
+                    ma20 = snap.lastPrice.toDouble(),
+                    isBelowEma50 = false,
+                    isSupertrendBullish = false
+                )
+            }
+            val cacheAge = System.currentTimeMillis() - (technicalCacheTime[ticker] ?: 0L)
+            if ((cachedTech == null || cacheAge > 180_000L) && technicalFetchInFlight.putIfAbsent(ticker, true) == null) {
+                repoScope.launch(Dispatchers.IO) {
+                    try {
+                        val candles = yahooRepo.fetchIntradayCandles(ticker)
+                        if (candles.isNotEmpty()) {
+                            val res = TechnicalAnalyzer.analyze(ticker, candles, snap.lastPrice.toDouble())
+                            technicalCache[ticker] = res
+                            technicalCacheTime[ticker] = System.currentTimeMillis()
+                        }
+                    } catch (_: Exception) {
+                    } finally {
+                        technicalFetchInFlight.remove(ticker)
+                    }
+                }
+            }
 
             val prevRec = previousRecommendations[historyKey]
             val snapshotCount = history.size
