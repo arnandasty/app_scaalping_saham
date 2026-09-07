@@ -144,11 +144,19 @@ window.autoFillTickers = function(tickers) {
             return m ? parseFloat(m[1].replace(',', '.')) : 0.0;
         }
 
+        function getTickSize(p) {
+            if (p < 200) return 1;
+            if (p < 500) return 2;
+            if (p < 2000) return 5;
+            if (p < 5000) return 10;
+            return 25;
+        }
+
         var SKIP_WORDS = ['FREQ','PREV','HIGH','OPEN','LOW','BELI','JUAL','IHSG',
             'SELL','NONE','VOID','INFO','LOAD','LIST','COPY','SORT','EDIT','VIEW',
             'CARI','NAMA','KODE','HARI','BULAN','YANG','DARI','DEAL','DONE','SAVE',
             'FREE','PLUS','TRUE','BEST','CALL','HOLD','STOP','NEXT','BACK','MENU',
-            'MOVE','BULL','BEAR','AUTO','LIVE'];
+            'MOVE','BULL','BEAR','AUTO','LIVE','VOL','VAL','TURNOVER','ARA','ARB'];
 
         function isSkipWord(w) {
             return SKIP_WORDS.indexOf(w) >= 0;
@@ -380,33 +388,51 @@ window.autoFillTickers = function(tickers) {
                 var bidLevels = [];
                 var offerLevels = [];
 
-                // Cari pasangan Bid-Offer: dua angka berdekatan (spread < 25%)
+                // Cari pasangan Bid-Offer di bursa BEI
+                // Kriteria ketat: offer > bid, selisih spread wajar (maksimal 5 tick / <= 5%), 
+                // dan harga bid harus menurun (descending) serta offer meningkat (ascending).
                 for (var j = 0; j < nums.length - 1; j++) {
                     var v1 = nums[j];
                     var v2 = nums[j + 1];
-                    var maxV = Math.max(v1, v2);
-                    var spread = Math.abs(v1 - v2) / maxV;
 
-                    if (v1 >= 1 && v2 >= 1 && v1 <= 99000 && v2 <= 99000 && spread <= 0.25) {
-                        var bidPrice = Math.min(v1, v2);
-                        var offerPrice = Math.max(v1, v2);
-                        var bidLot = j > 0 ? nums[j - 1] : 0;
-                        var offerLot = j + 2 < nums.length ? nums[j + 2] : 0;
+                    if (v1 >= 1 && v2 >= 1 && v1 <= 99000 && v2 <= 99000) {
+                        var minP = Math.min(v1, v2);
+                        var maxP = Math.max(v1, v2);
+                        var tick = getTickSize(minP);
+                        var diff = maxP - minP;
 
-                        if (bidLevels.length < 10) {
-                            bidLevels.push({ price: bidPrice, lot: bidLot, frequency: 0 });
+                        // Di BEI, spread bid-offer saham aktif umumnya 1-3 tick (maksimal 5 tick)
+                        if (diff >= 1 && diff <= Math.max(5 * tick, Math.ceil(minP * 0.05))) {
+                            var candBid = minP;
+                            var candOffer = maxP;
+
+                            // Validasi monotonic: Bid harus lebih rendah dari level sebelumnya, Offer harus lebih tinggi
+                            var isMonotonic = true;
+                            if (bidLevels.length > 0) {
+                                var lastBid = bidLevels[bidLevels.length - 1].price;
+                                var lastOffer = offerLevels[offerLevels.length - 1].price;
+                                if (candBid >= lastBid || candOffer <= lastOffer) {
+                                    isMonotonic = false;
+                                }
+                            }
+
+                            if (isMonotonic) {
+                                var bidLot = j > 0 ? nums[j - 1] : 0;
+                                var offerLot = j + 2 < nums.length ? nums[j + 2] : 0;
+
+                                if (bidLevels.length < 10) {
+                                    bidLevels.push({ price: candBid, lot: bidLot, frequency: 0 });
+                                }
+                                if (offerLevels.length < 10) {
+                                    offerLevels.push({ price: candOffer, lot: offerLot, frequency: 0 });
+                                }
+
+                                // Loncat melewati pasangan dan lot untuk iterasi berikutnya
+                                j += 2;
+                            }
                         }
-                        if (offerLevels.length < 10) {
-                            offerLevels.push({ price: offerPrice, lot: offerLot, frequency: 0 });
-                        }
-                        
-                        // Loncat untuk menghindari pencocokan lot sebagai harga
-                        j += 2;
                     }
                 }
-
-                if (lastPrice === 0 && offerLevels.length > 0) lastPrice = offerLevels[0].price;
-                if (lastPrice === 0 && bidLevels.length > 0) lastPrice = bidLevels[0].price;
 
                 // ---- Cari ARA / ARB dari token widget ----
                 // Stockbit menampilkan "ARA 1,135" dan "ARB 775" di header widget
@@ -435,16 +461,36 @@ window.autoFillTickers = function(tickers) {
                 var bestBid = bidLevels.length > 0 ? bidLevels[0].price : 0;
                 var extractedPrice = 0;
 
+                // Label statistik harian yang angkanya BUKAN last price (misal: Open 180, High 190, Low 179)
+                var STAT_LABELS = ['OPEN', 'HIGH', 'LOW', 'PREV', 'AVG', 'CLOSE', 'TERTINGGI', 'TERENDAH', 
+                    'PEMBUKAAN', 'SEBELUMNYA', 'RATA-RATA', 'VOL', 'VOLUME', 'VAL', 'VALUE', 'TURNOVER', 
+                    'ARA', 'ARB', 'AR+', 'AR-', 'LOT', 'LOTS', 'BID', 'OFFER', 'B', 'O', 'FREK', 'FREQ', 'FREQUENCY'];
+
                 // Cari angka harga aktual (last price) dari token sebelum header orderbook
-                for (var p = 0; p < (headerIdx !== -1 ? headerIdx : Math.min(tokens.length, 20)); p++) {
+                var limitIdx = (headerIdx !== -1 ? headerIdx : Math.min(tokens.length, 25));
+                for (var p = 0; p < limitIdx; p++) {
                     var tVal = tokens[p].trim();
-                    // JANGAN ambil perubahan harga (+/-), persentase (%), atau tanda kurung
-                    if (tVal.startsWith('+') || tVal.startsWith('-') || tVal.includes('%') || tVal.startsWith('(')) continue;
+                    // JANGAN ambil perubahan harga (+/-), persentase (%), tanda kurung, atau teks
+                    if (tVal.startsWith('+') || tVal.startsWith('-') || tVal.includes('%') || tVal.startsWith('(') || /[a-zA-Z]/.test(tVal)) continue;
+                    
+                    // JANGAN ambil angka yang didahului label statistik (misal: "High 190", "Open 180", "Low 179")
+                    if (p > 0) {
+                        var prev1 = tokens[p - 1].toUpperCase().replace(/[:\s]/g, '');
+                        if (STAT_LABELS.indexOf(prev1) >= 0) continue;
+                    }
+                    if (p > 1 && tokens[p - 1].trim() === ':') {
+                        var prev2 = tokens[p - 2].toUpperCase().replace(/[:\s]/g, '');
+                        if (STAT_LABELS.indexOf(prev2) >= 0) continue;
+                    }
+
                     var val = parseNum(tVal);
-                    // Validasi ketat: harga harus mendekati best bid / best offer
                     if (val > 0) {
                         if (bestBid > 0 && bestOffer > 0) {
-                            if (val >= Math.floor(bestBid * 0.90) && val <= Math.ceil(bestOffer * 1.10)) {
+                            var tSize = getTickSize(bestBid);
+                            // Validasi sangat ketat: Last Price WAJIB berada di dalam spread atau maksimal 1 tick dari best bid/offer
+                            var minAllowed = bestBid - tSize;
+                            var maxAllowed = bestOffer + tSize;
+                            if (val >= minAllowed && val <= maxAllowed) {
                                 extractedPrice = val;
                                 break;
                             }
@@ -457,6 +503,9 @@ window.autoFillTickers = function(tickers) {
 
                 if (extractedPrice > 0) {
                     lastPrice = extractedPrice;
+                } else if (bestBid > 0 && bestOffer > 0) {
+                    // Fallback aman: jika ada bid & offer, gunakan bestBid (atau bestOffer jika sedang naik)
+                    lastPrice = (changePercent > 0) ? bestOffer : bestBid;
                 } else if (bestOffer > 0) {
                     lastPrice = bestOffer;
                 } else if (bestBid > 0) {

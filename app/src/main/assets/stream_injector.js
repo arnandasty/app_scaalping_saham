@@ -37,18 +37,6 @@
                 var priceText = cols.length > 2 ? (cols[2].textContent || '') : '';
                 var price = parseInt(priceText.replace(/[,.]/g, '').trim(), 10) || 0;
 
-                // Fallback scan harga jika cols[2] kosong
-                if (price <= 0) {
-                    for (var c = 1; c < cols.length; c++) {
-                        var cVal = (cols[c].textContent || '').replace(/[,.]/g, '').trim();
-                        var num = parseInt(cVal, 10);
-                        if (!isNaN(num) && num >= 1 && num <= 99000 && !cols[c].textContent.includes(':')) {
-                            price = num;
-                            break;
-                        }
-                    }
-                }
-
                 var actionEl = cols.length > 3 ? cols[3].querySelector('p') : null;
                 var actionText = actionEl ? (actionEl.textContent || '') : (cols.length > 3 ? cols[3].textContent || '' : '');
                 var actionType = actionEl ? actionEl.getAttribute('action') : null;

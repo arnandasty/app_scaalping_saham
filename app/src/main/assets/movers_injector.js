@@ -160,9 +160,11 @@
                 var changePct = 0.0;
                 var turnoverStr = "";
 
-                // 1. Ekstrak dari cell td[1] secara spesifik (Kolom Harga di Stockbit)
-                if (tds.length >= 2) {
-                    var priceCellText = (tds[1].innerText || '').trim();
+                // 1. Ekstrak Price HANYA dari td[1] atau td[2] (Kolom Harga di Stockbit)
+                // JANGAN pernah mencari harga di td[3..n] karena itu adalah kolom Open, High, Low, Vol, Val!
+                for (var colIdx = 1; colIdx <= Math.min(2, tds.length - 1); colIdx++) {
+                    var priceCellText = (tds[colIdx].innerText || '').trim();
+                    if (priceCellText.includes('%') || /open|high|low|vol|val/i.test(priceCellText)) continue;
                     var pTokens = priceCellText.split(/\s+/);
                     for (var pt = 0; pt < pTokens.length; pt++) {
                         var pTok = pTokens[pt].trim();
@@ -175,9 +177,10 @@
                             break;
                         }
                     }
+                    if (price > 0) break;
                 }
 
-                // 2. Ekstrak Change % dan Turnover dari seluruh baris
+                // 2. Ekstrak Change % dan Turnover dari seluruh baris (tanpa menimpa harga)
                 for (var c = 1; c < tds.length; c++) {
                     var cText = (tds[c].innerText || '').trim();
                     var toMatch = cText.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
@@ -185,21 +188,6 @@
 
                     var pMatch = cText.match(/([+-]?\d+[.,]\d+)%/);
                     if (pMatch && changePct === 0.0) changePct = parseFloat(pMatch[1].replace(',', '.'));
-
-                    // Fallback jika tds[1] tidak berhasil menemukan harga
-                    if (price === 0) {
-                        var cTokens = cText.split(/\s+/);
-                        for (var ct = 0; ct < cTokens.length; ct++) {
-                            var curTok = cTokens[ct].trim();
-                            if (curTok.startsWith('+') || curTok.startsWith('-') || curTok.includes('%') || curTok.startsWith('(') || /[a-zA-Z]/.test(curTok)) continue;
-                            var cleanVal = curTok.replace(/[.,]/g, '');
-                            var parsed = parseInt(cleanVal, 10);
-                            if (!isNaN(parsed) && parsed >= 1 && parsed <= 99000) {
-                                price = parsed;
-                                break;
-                            }
-                        }
-                    }
                 }
 
                 if (ticker && price > 0) {
@@ -229,53 +217,33 @@
                 if (row) {
                     var tds = row.querySelectorAll('td');
                     if (tds.length >= 2) {
-                        for (var c = 1; c < tds.length; c++) {
-                            var cellText = tds[c].innerText || '';
-                            var valMatch = cellText.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
-                            if (valMatch && !turnoverStr) {
-                                turnoverStr = valMatch[0];
-                            }
-
+                        for (var colIdx = 1; colIdx <= Math.min(2, tds.length - 1); colIdx++) {
+                            var cellText = (tds[colIdx].innerText || '').trim();
+                            if (cellText.includes('%') || /open|high|low|vol|val/i.test(cellText)) continue;
                             var tokens = cellText.split(/\s+/);
                             for (var k = 0; k < tokens.length; k++) {
                                 var t = tokens[k].trim();
                                 if (t.startsWith('+') || t.startsWith('-') || t.includes('%') || t.startsWith('(') || /[a-zA-Z]/.test(t)) continue;
                                 var clean = t.replace(/[.,]/g, '');
                                 var val = parseInt(clean, 10);
-                                if (!isNaN(val) && val >= 1 && val <= 99000 && price === 0) {
+                                if (!isNaN(val) && val >= 1 && val <= 99000) {
                                     price = val;
+                                    break;
                                 }
                             }
+                            if (price > 0) break;
+                        }
 
-                            var pctMatch = cellText.match(/([+-]?\d+[.,]\d+)%/);
+                        for (var c = 1; c < tds.length; c++) {
+                            var cCell = (tds[c].innerText || '').trim();
+                            var valMatch = cCell.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
+                            if (valMatch && !turnoverStr) {
+                                turnoverStr = valMatch[0];
+                            }
+                            var pctMatch = cCell.match(/([+-]?\d+[.,]\d+)%/);
                             if (pctMatch && changePct === 0) {
                                 changePct = parseFloat(pctMatch[1].replace(',', '.'));
                             }
-                        }
-                    }
-                }
-
-                if (price === 0) {
-                    row = img.closest('[class*="row"]') || img.parentElement;
-                    if (row) {
-                        var rowText = row.innerText || '';
-                        var valMatchFallback = rowText.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
-                        if (valMatchFallback && !turnoverStr) {
-                            turnoverStr = valMatchFallback[0];
-                        }
-                        var tokens = rowText.split(/\s+/);
-                        for (var i = 0; i < tokens.length; i++) {
-                            var t = tokens[i].trim();
-                            if (t.startsWith('+') || t.startsWith('-') || t.includes('%') || t.startsWith('(') || /[a-zA-Z]/.test(t)) continue;
-                            var clean = t.replace(/[.,]/g, '');
-                            var val = parseInt(clean, 10);
-                            if (!isNaN(val) && val >= 1 && val <= 99000 && price === 0) {
-                                price = val;
-                            }
-                        }
-                        var fallbackPctMatch = rowText.match(/([+-]?\d+[.,]\d+)%/);
-                        if (fallbackPctMatch && changePct === 0) {
-                            changePct = parseFloat(fallbackPctMatch[1].replace(',', '.'));
                         }
                     }
                 }

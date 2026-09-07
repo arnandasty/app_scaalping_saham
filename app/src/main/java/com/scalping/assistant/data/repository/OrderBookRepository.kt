@@ -541,6 +541,35 @@ class OrderBookRepository(
         if (price <= 0) return
         val clean = ticker.trim().uppercase()
 
+        // 0. VALIDASI HARGA ANTI-FLUTTER (Mencegah lonjakan ke High 190, Open/Low 180, atau Lot size):
+        val currentSnap = synchronized(historyMap) {
+            historyMap[clean]?.lastOrNull() ?: historyMap["movers_$clean"]?.lastOrNull()
+        }
+        if (currentSnap != null && currentSnap.bidLevels.isNotEmpty() && currentSnap.offerLevels.isNotEmpty()) {
+            val bestBid = currentSnap.bidLevels.first().price
+            val bestOffer = currentSnap.offerLevels.first().price
+            if (bestBid > 0 && bestOffer > 0 && bestBid <= bestOffer) {
+                val tick = PriceFraction.getTickSize(bestBid)
+                val minValid = bestBid - (2 * tick)
+                val maxValid = bestOffer + (2 * tick)
+                if (price < minValid || price > maxValid) {
+                    android.util.Log.w("PRICE_GUARD", "⚠️ Abaikan lonjakan harga liar $clean: Rp $price (BestBid: $bestBid, BestOffer: $bestOffer)")
+                    return
+                }
+            }
+        } else {
+            val existingPrice = _manualFlow.value.find { it.ticker == clean }?.lastPrice
+                ?: _moversFlow.value.find { it.ticker == clean }?.lastPrice
+                ?: 0
+            if (existingPrice > 0) {
+                val diffPct = kotlin.math.abs(price - existingPrice).toDouble() / existingPrice
+                if (diffPct > 0.05) {
+                    android.util.Log.w("PRICE_GUARD", "⚠️ Abaikan lonjakan harga liar $clean: Rp $price vs Rp $existingPrice")
+                    return
+                }
+            }
+        }
+
         // 1. Update di Manual Flow
         val manual = _manualFlow.value
         val mIdx = manual.indexOfFirst { it.ticker == clean }
@@ -1189,8 +1218,18 @@ class OrderBookRepository(
             val oldAnalysis = manualList[manualIdx]
             val rawSnap = historyMap[ticker]?.lastOrNull()
             if (rawSnap != null) {
-                val effectivePrice = if (oldAnalysis.lastPrice > 0) oldAnalysis.lastPrice else rawSnap.lastPrice
-                val effectiveChange = if (oldAnalysis.changePercent != 0.0) oldAnalysis.changePercent else rawSnap.changePercent
+                val bestBid = rawSnap.bidLevels.firstOrNull()?.price ?: 0
+                val bestOffer = rawSnap.offerLevels.firstOrNull()?.price ?: 0
+                var effectivePrice = if (rawSnap.lastPrice > 0) rawSnap.lastPrice else oldAnalysis.lastPrice
+                if (bestBid > 0 && bestOffer > 0 && bestBid <= bestOffer) {
+                    val tick = PriceFraction.getTickSize(bestBid)
+                    val minValid = bestBid - (2 * tick)
+                    val maxValid = bestOffer + (2 * tick)
+                    if (effectivePrice < minValid || effectivePrice > maxValid) {
+                        effectivePrice = if (rawSnap.changePercent > 0) bestOffer else bestBid
+                    }
+                }
+                val effectiveChange = if (rawSnap.changePercent != 0.0) rawSnap.changePercent else oldAnalysis.changePercent
                 val snap = rawSnap.copy(lastPrice = effectivePrice, changePercent = effectiveChange)
 
                 val ofResult = oldAnalysis.orderFlow
@@ -1228,8 +1267,18 @@ class OrderBookRepository(
                 totalBidLot = 0L,
                 totalOfferLot = 0L
             )
-            val effectivePrice = if (oldAnalysis.lastPrice > 0) oldAnalysis.lastPrice else rawSnap.lastPrice
-            val effectiveChange = if (oldAnalysis.changePercent != 0.0) oldAnalysis.changePercent else rawSnap.changePercent
+            val bestBid = rawSnap.bidLevels.firstOrNull()?.price ?: 0
+            val bestOffer = rawSnap.offerLevels.firstOrNull()?.price ?: 0
+            var effectivePrice = if (rawSnap.lastPrice > 0) rawSnap.lastPrice else oldAnalysis.lastPrice
+            if (bestBid > 0 && bestOffer > 0 && bestBid <= bestOffer) {
+                val tick = PriceFraction.getTickSize(bestBid)
+                val minValid = bestBid - (2 * tick)
+                val maxValid = bestOffer + (2 * tick)
+                if (effectivePrice < minValid || effectivePrice > maxValid) {
+                    effectivePrice = if (rawSnap.changePercent > 0) bestOffer else bestBid
+                }
+            }
+            val effectiveChange = if (rawSnap.changePercent != 0.0) rawSnap.changePercent else oldAnalysis.changePercent
             val snap = rawSnap.copy(lastPrice = effectivePrice, changePercent = effectiveChange)
 
             val ofResult = oldAnalysis.orderFlow
@@ -1329,8 +1378,22 @@ class OrderBookRepository(
                             val source = obj.optString("source", "")
                             val historyKey = "movers_$ticker"
                             val existingSnap = synchronized(historyMap) { historyMap[historyKey]?.lastOrNull() ?: historyMap[ticker]?.lastOrNull() }
-                            val priceToUse = if (lastPrice > 0) lastPrice else (existingSnap?.lastPrice ?: _moversFlow.value.find { it.ticker == ticker }?.lastPrice ?: 0)
-                            if (priceToUse <= 0) return@async null
+                            val rawPriceToUse = if (lastPrice > 0) lastPrice else (existingSnap?.lastPrice ?: _moversFlow.value.find { it.ticker == ticker }?.lastPrice ?: 0)
+                            if (rawPriceToUse <= 0) return@async null
+
+                            // Sanitize terhadap existing orderbook jika tersedia
+                            var priceToUse = rawPriceToUse
+                            val existingBid = existingSnap?.bidLevels?.firstOrNull()?.price ?: 0
+                            val existingOffer = existingSnap?.offerLevels?.firstOrNull()?.price ?: 0
+                            if (existingBid > 0 && existingOffer > 0 && existingBid <= existingOffer) {
+                                val tick = PriceFraction.getTickSize(existingBid)
+                                val minValid = existingBid - (2 * tick)
+                                val maxValid = existingOffer + (2 * tick)
+                                if (priceToUse < minValid || priceToUse > maxValid) {
+                                    priceToUse = if (changePercent > 0) existingOffer else existingBid
+                                }
+                            }
+
                             val snapshot = if (existingSnap != null && existingSnap.bidLevels.isNotEmpty()) {
                                 existingSnap.copy(lastPrice = priceToUse, changePercent = changePercent)
                             } else {
@@ -1499,8 +1562,26 @@ class OrderBookRepository(
             val araPrice = obj.optInt("araPrice", 0)
             val arbPrice = obj.optInt("arbPrice", 0)
 
+            // Validasi sanitasi harga: jika ada bid/offer, pastikan lastPrice tidak melompat ke High/Open/Low
+            val bestBid = bidLevels.firstOrNull()?.price ?: 0
+            val bestOffer = offerLevels.firstOrNull()?.price ?: 0
+            var finalPrice = lastPrice
+
+            if (bestBid > 0 && bestOffer > 0 && bestBid <= bestOffer) {
+                val tick = PriceFraction.getTickSize(bestBid)
+                val minValid = bestBid - (2 * tick)
+                val maxValid = bestOffer + (2 * tick)
+                if (finalPrice < minValid || finalPrice > maxValid) {
+                    finalPrice = if (changePercent > 0) bestOffer else bestBid
+                }
+            } else if (bestBid > 0 && (finalPrice <= 0 || finalPrice < bestBid * 0.85 || finalPrice > bestBid * 1.15)) {
+                finalPrice = bestBid
+            } else if (bestOffer > 0 && (finalPrice <= 0 || finalPrice < bestOffer * 0.85 || finalPrice > bestOffer * 1.15)) {
+                finalPrice = bestOffer
+            }
+
             OrderBookSnapshot(
-                ticker = ticker, lastPrice = lastPrice, changePercent = changePercent,
+                ticker = ticker, lastPrice = finalPrice, changePercent = changePercent,
                 timestamp = timestamp, bidLevels = bidLevels, offerLevels = offerLevels,
                 totalBidLot = totalBidLot, totalOfferLot = totalOfferLot,
                 araPrice = araPrice, arbPrice = arbPrice
