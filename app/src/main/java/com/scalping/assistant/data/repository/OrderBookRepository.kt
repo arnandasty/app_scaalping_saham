@@ -6,6 +6,7 @@ import com.scalping.assistant.data.models.TechnicalResult
 import com.scalping.assistant.engine.MarketSession
 import com.scalping.assistant.engine.OrderFlowAnalyzer
 import com.scalping.assistant.engine.ScoringEngine
+import com.scalping.assistant.engine.BSJPScoringEngine
 import com.scalping.assistant.engine.TechnicalAnalyzer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +79,10 @@ class OrderBookRepository(
     private val previousRecommendations = mutableMapOf<String, Recommendation>()
     private val tapeReadingMap = mutableMapOf<String, com.scalping.assistant.data.models.TapeReadingStat>()
     private val bandarDetectorMap = mutableMapOf<String, com.scalping.assistant.data.models.BandarDetectorStat>()
+    
+    // Cache harga penutupan kemarin (prev close) per ticker — sumber referensi tunggal
+    // untuk menghitung changePercent agar tidak terjadi floating-point drift yang menyebabkan harga loncat
+    private val prevClosePriceCache = ConcurrentHashMap<String, Double>()
     
     // Coroutine Scope & Persistence State
     private val repoScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
@@ -636,14 +641,19 @@ class OrderBookRepository(
                 totalOfferLot = 0L
             )
 
-        // Hitung changePercent baru secara dinamis
-        val prevClose = if (old.lastPrice > 0 && old.changePercent != 0.0) {
-            old.lastPrice / (1.0 + old.changePercent / 100.0)
-        } else if (rawSnap.lastPrice > 0 && rawSnap.changePercent != 0.0) {
-            rawSnap.lastPrice / (1.0 + rawSnap.changePercent / 100.0)
-        } else {
-            old.lastPrice.toDouble()
-        }
+        // FIX HARGA LONCAT: Gunakan prevClosePriceCache sebagai sumber referensi tunggal
+        // Sebelumnya: prevClose dihitung dari old.changePercent yang bisa sudah drift (floating)
+        // Sekarang: pakai cache stabil dari sumber data asli Stockbit
+        val prevClose = prevClosePriceCache[ticker]
+            ?: if (old.changePercent != 0.0 && old.lastPrice > 0) {
+                // Estimasi awal sebelum cache tersedia
+                val estimated = old.lastPrice / (1.0 + old.changePercent / 100.0)
+                prevClosePriceCache[ticker] = estimated // Simpan estimasi awal
+                estimated
+            } else {
+                old.lastPrice.toDouble()
+            }
+
         val newChangePercent = if (prevClose > 0) {
             ((newPrice - prevClose) / prevClose) * 100.0
         } else {
@@ -1511,6 +1521,10 @@ class OrderBookRepository(
                         try {
                             val obj = jsonArray.getJSONObject(i)
                             val ticker = obj.getString("ticker").trim().uppercase()
+                            
+                            // Abaikan saham waran (yang berakhiran -W)
+                            if (ticker.endsWith("-W")) return@async null
+                            
                             val lastPrice = obj.optInt("lastPrice", 0)
                             val changePercent = obj.optDouble("changePercent", 0.0)
                             val turnover = obj.optString("turnover", "")
@@ -1519,12 +1533,15 @@ class OrderBookRepository(
                             val existingSnap = synchronized(historyMap) { historyMap[historyKey]?.lastOrNull() ?: historyMap[ticker]?.lastOrNull() }
                             val existingPriceForGuard = existingSnap?.lastPrice ?: _moversFlow.value.find { it.ticker == ticker }?.lastPrice ?: 0
                             
+                            // FIX HARGA LONCAT: Guard scraper movers menggunakan % (10%) bukan tick count
+                            // Sebelumnya 4-tick terlalu ketat dan memblokir lonjakan sah
+                            // Sekarang: jika harga scraper tidak wajar (>10% dari harga real-time), abaikan
                             var priceToUse = if (lastPrice > 0) {
                                 if (existingPriceForGuard > 0) {
-                                    val tickGuard = PriceFraction.getTickSize(existingPriceForGuard)
-                                    val diff = kotlin.math.abs(existingPriceForGuard - lastPrice)
-                                    if (diff > tickGuard * 4) {
-                                        existingPriceForGuard // Guard: Abaikan harga scraper yg telat (kepental)
+                                    val pctDiff = kotlin.math.abs(existingPriceForGuard - lastPrice).toDouble() / existingPriceForGuard
+                                    if (pctDiff > 0.10) {
+                                        // Scraper telat/salah baca — pertahankan harga real-time yang sudah ada
+                                        existingPriceForGuard
                                     } else {
                                         lastPrice
                                     }
@@ -1654,7 +1671,7 @@ class OrderBookRepository(
                         merged.add(item)
                     }
                 }
-                val sorted = merged.sortedByDescending { it.score }
+                val sorted = merged.sortedByDescending { it.score }.take(60) // Limit to top 60 best stocks
                 _moversFlow.value = sorted
                 refreshTopPicks()
                 updatePortfolioPositions(sorted)
@@ -1674,14 +1691,106 @@ class OrderBookRepository(
     }
 
     private fun refreshTopPicks() {
-        val all = (_manualFlow.value + _moversFlow.value)
-            .sortedByDescending { it.score }
-            .distinctBy { it.ticker }
+        val session = MarketSession.getCurrentSession()
+        val isBSJPTime = session.phase == com.scalping.assistant.engine.MarketPhase.SESSION_2_LATE ||
+                         session.phase == com.scalping.assistant.engine.MarketPhase.PRE_CLOSE ||
+                         session.phase == com.scalping.assistant.engine.MarketPhase.CLOSED
 
-        // Top Picks: Dikembalikan ke aturan KETAT seperti awal (Filter kualitas tinggi)
-        _topPicksFlow.value = all.filter {
-            it.score >= 72 && it.riskRewardRatio >= 1.4 && it.snapshotCount >= 5 && it.recommendation != com.scalping.assistant.data.models.Recommendation.AVOID
-        }.take(5)
+        if (isBSJPTime) {
+            // Setelah 15:30 WIB hingga market tutup: jalankan screening BSJP di background
+            repoScope.launch(Dispatchers.Default) {
+                refreshBSJPCandidates()
+            }
+        } else {
+            // Sebelum 15:30: Top Picks scalping biasa dengan aturan KETAT
+            val all = (_manualFlow.value + _moversFlow.value)
+                .sortedByDescending { it.score }
+                .distinctBy { it.ticker }
+
+            _topPicksFlow.value = all.filter {
+                it.score >= 75 && it.riskRewardRatio >= 1.4 && it.snapshotCount >= 5 &&
+                it.recommendation == com.scalping.assistant.data.models.Recommendation.STRONG_BUY &&
+                !it.style.startsWith("BSJP")
+            }.take(5)
+        }
+    }
+
+    /**
+     * 🌙 BSJP Screening — aktif setelah jam 15:30 WIB
+     * Menganalisis semua saham yang sudah ter-track (Manual + Movers)
+     * dan mencari maksimal 3 kandidat terkuat untuk BSJP (Beli Sore Jual Pagi)
+     */
+    private suspend fun refreshBSJPCandidates() {
+        val allTracked = (_manualFlow.value + _moversFlow.value).distinctBy { it.ticker }
+        if (allTracked.isEmpty()) return
+
+        val candidates = mutableListOf<Pair<BSJPScoringEngine.BSJPCandidate, StockAnalysis>>()
+
+        for (analysis in allTracked) {
+            try {
+                val ticker = analysis.ticker
+                val snapshot = synchronized(historyMap) {
+                    historyMap[ticker]?.lastOrNull() ?: historyMap["movers_$ticker"]?.lastOrNull()
+                } ?: continue
+
+                // Ambil daily technicals dari Yahoo Finance (cached 5 menit)
+                val dailyData = try { yahooRepo.fetchDailyTechnicals(ticker) } catch (_: Exception) { null }
+
+                val bandarStat = bandarDetectorMap[ticker]
+                val prevClose = prevClosePriceCache[ticker] ?: 0.0
+
+                // Hitung today high & low dari historyMap
+                val history = synchronized(historyMap) {
+                    historyMap[ticker]?.toList() ?: historyMap["movers_$ticker"]?.toList() ?: emptyList()
+                }
+                val todayHigh = history.maxOfOrNull { it.lastPrice.toDouble() } ?: analysis.technical.todayHigh
+                val todayLow = history.filter { it.lastPrice > 0 }.minOfOrNull { it.lastPrice.toDouble() } ?: 0.0
+
+                val candidate = BSJPScoringEngine.evaluate(
+                    ticker = ticker,
+                    snapshot = snapshot,
+                    technical = analysis.technical,
+                    bandarDetector = bandarStat,
+                    dailyData = dailyData,
+                    todayHigh = todayHigh,
+                    todayLow = todayLow,
+                    prevClosePrice = prevClose
+                ) ?: continue
+
+                candidates.add(Pair(candidate, analysis))
+            } catch (_: Exception) { }
+        }
+
+        // Sort by score, ambil top 3
+        val top3 = candidates.sortedByDescending { it.first.score }.take(3)
+
+        if (top3.isNotEmpty()) {
+            val bsjpAnalyses = top3.map { (candidate, existingAnalysis) ->
+                BSJPScoringEngine.toStockAnalysis(candidate, existingAnalysis)
+            }
+            _topPicksFlow.value = bsjpAnalyses
+            android.util.Log.d("BSJP", "🌙 Top ${bsjpAnalyses.size} kandidat BSJP: ${bsjpAnalyses.map { it.ticker }}")
+        } else {
+            val all = (_manualFlow.value + _moversFlow.value)
+                .sortedByDescending { it.score }
+                .distinctBy { it.ticker }
+
+            val fallbackPicks = all.filter {
+                it.score >= 60 && it.riskRewardRatio >= 1.2 &&
+                it.recommendation != com.scalping.assistant.data.models.Recommendation.AVOID
+            }.take(3)
+            
+            // Konversi ke tampilan BSJP meskipun ini fallback
+            val bsjpFallback = fallbackPicks.map {
+                it.copy(
+                    style = "BSJP_FALLBACK",
+                    reasons = listOf("🌙 Alternatif BSJP: Scalping Sore") + it.reasons,
+                    recommendation = it.recommendation // Tetap BUY / WATCH tapi nanti UI akan merender "🌙 BUY BSJP"
+                )
+            }
+            _topPicksFlow.value = bsjpFallback
+            android.util.Log.d("BSJP", "🌙 Fallback ke ${bsjpFallback.size} kandidat scalping sore")
+        }
     }
 
     private fun isQuietMarket(sessionInfo: com.scalping.assistant.engine.SessionInfo): Boolean {
@@ -1757,6 +1866,16 @@ class OrderBookRepository(
                 finalPrice = bestBid
             } else if (bestOffer > 0 && (finalPrice <= 0 || finalPrice < bestOffer * 0.85 || finalPrice > bestOffer * 1.15)) {
                 finalPrice = bestOffer
+            }
+
+            // FIX HARGA LONCAT: Simpan prevClosePrice dari data scraper asli Stockbit
+            // changePercent dari scraper = sumber paling akurat untuk menghitung harga kemarin
+            // Ini mencegah floating-point drift saat recalculateAnalysis dijalankan berulang kali
+            if (finalPrice > 0 && changePercent != 0.0 && !prevClosePriceCache.containsKey(ticker)) {
+                val prevClose = finalPrice / (1.0 + changePercent / 100.0)
+                if (prevClose > 0) {
+                    prevClosePriceCache[ticker] = prevClose
+                }
             }
 
             OrderBookSnapshot(

@@ -62,9 +62,11 @@ object MarketSession {
             MarketPhase.SESSION_1_PRIME -> "Waktu terbaik untuk day trade! Likuiditas & tren terbentuk."
             MarketPhase.SESSION_1_OPEN -> "Volatilitas tinggi open market. Hati-hati bid/offer loncat."
             MarketPhase.SESSION_2_PRIME -> "Momentum sesi siang berjalan. Perhatikan hajar kanan."
-            MarketPhase.SESSION_1_LATE, MarketPhase.SESSION_2_LATE -> "Menjelang jeda/tutup. Waspadai aksi profit taking."
+            MarketPhase.SESSION_1_LATE -> "Menjelang jeda. Waspadai aksi profit taking."
+            MarketPhase.SESSION_2_LATE -> "Sistem BSJP Aktif 🌙 Cek Top Picks untuk kandidat overnight!"
+            MarketPhase.PRE_CLOSE -> "Pre-Closing Auction 🌙 Eksekusi BSJP sekarang jika ada kandidat kuat!"
             MarketPhase.BREAK -> "Market istirahat. Analisis sinyal untuk persiapan sesi 2."
-            MarketPhase.PRE_CLOSE, MarketPhase.CLOSED -> "Market tutup. Gunakan mode review & simulasi."
+            MarketPhase.CLOSED -> "Market tutup. Gunakan mode review & simulasi."
             MarketPhase.PRE_OPEN -> "Pra-pembukaan bursa. Orderbook mulai terisi."
         }
 

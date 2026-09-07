@@ -53,6 +53,16 @@ class RankingAdapter(
         private val tvPrimaryReason: TextView = itemView.findViewById(R.id.tvPrimaryReason)
 
         fun bind(item: StockAnalysis, rank: Int) {
+            // Cek apakah ini mode BSJP
+            val isBSJP = item.style.startsWith("BSJP")
+            if (isBSJP) {
+                // Warna background malam/ungu untuk BSJP
+                cardStock.setCardBackgroundColor(Color.parseColor("#1E1B4B"))
+            } else {
+                // Default warna card scalping
+                cardStock.setCardBackgroundColor(Color.parseColor("#172036"))
+            }
+
             tvRank.text = "#$rank"
             
             val sign = if (item.changePercent > 0) "+" else ""
@@ -69,7 +79,11 @@ class RankingAdapter(
 
             tvScore.text = "Skor: ${item.score}/100"
 
-            tvRecommendation.text = item.recommendation.label
+            if (isBSJP) {
+                tvRecommendation.text = "🌙 ${item.recommendation.label} BSJP"
+            } else {
+                tvRecommendation.text = item.recommendation.label
+            }
             val recColor = Color.parseColor(item.recommendation.colorCode)
             tvRecommendation.setTextColor(recColor)
             tvScore.setTextColor(recColor)
