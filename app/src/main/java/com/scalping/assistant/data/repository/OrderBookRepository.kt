@@ -789,10 +789,15 @@ class OrderBookRepository(
             }
 
             fun parseBrokerCode(obj: org.json.JSONObject): String {
-                val cand = listOf("broker_code", "code", "broker", "brokerCode", "net_buy_broker", "net_sell_broker", "buy_broker", "sell_broker")
+                val cand = listOf("netbs_broker_code", "broker_code", "code", "broker", "brokerCode", "net_buy_broker", "net_sell_broker", "buy_broker", "sell_broker", "broker_id", "broker_name", "type", "symbol")
                 for (k in cand) {
+                    val opt = obj.opt(k)
+                    if (opt is org.json.JSONObject) {
+                        val subCode = opt.optString("code", opt.optString("broker_code", opt.optString("netbs_broker_code", ""))).trim().uppercase()
+                        if (subCode.isNotEmpty() && subCode.length in 2..4) return subCode
+                    }
                     val s = obj.optString(k, "").trim().uppercase()
-                    if (s.isNotEmpty() && s.length in 2..4) return s
+                    if (s.isNotEmpty() && s.length in 2..4 && !s.all { it.isDigit() }) return s
                 }
                 return ""
             }
@@ -810,21 +815,30 @@ class OrderBookRepository(
                 ?: bandarDetectorObj.optJSONObject("broker_summary")
                 ?: root.optJSONObject("broker_summary")
 
-            val buyersArr = brokerSummaryObj?.optJSONArray("buyer")
+            val rawBB = brokerSummaryObj?.opt("brokers_buy")
+            val rawBS = brokerSummaryObj?.opt("brokers_sell")
+
+            val buyersArr = brokerSummaryObj?.optJSONArray("brokers_buy")
+                ?: brokerSummaryObj?.optJSONArray("buyer")
                 ?: brokerSummaryObj?.optJSONArray("buyers")
                 ?: brokerSummaryObj?.optJSONArray("buy")
+                ?: data.optJSONArray("brokers_buy")
                 ?: data.optJSONArray("buyer")
                 ?: data.optJSONArray("buyers")
                 ?: data.optJSONArray("buy")
+                ?: bandarDetectorObj.optJSONArray("brokers_buy")
                 ?: bandarDetectorObj.optJSONArray("buyer")
                 ?: bandarDetectorObj.optJSONArray("buyers")
 
-            val sellersArr = brokerSummaryObj?.optJSONArray("seller")
+            val sellersArr = brokerSummaryObj?.optJSONArray("brokers_sell")
+                ?: brokerSummaryObj?.optJSONArray("seller")
                 ?: brokerSummaryObj?.optJSONArray("sellers")
                 ?: brokerSummaryObj?.optJSONArray("sell")
+                ?: data.optJSONArray("brokers_sell")
                 ?: data.optJSONArray("seller")
                 ?: data.optJSONArray("sellers")
                 ?: data.optJSONArray("sell")
+                ?: bandarDetectorObj.optJSONArray("brokers_sell")
                 ?: bandarDetectorObj.optJSONArray("seller")
                 ?: bandarDetectorObj.optJSONArray("sellers")
 
@@ -845,9 +859,9 @@ class OrderBookRepository(
                         val b = buyersArr.optJSONObject(i) ?: continue
                         val code = parseBrokerCode(b)
                         if (code.isEmpty()) continue
-                        val buyVal = parseJsonDouble(b, "b_val", "buy_value", "buy_val", "val", "value", "net_val", "net_value")
-                        val buyLot = parseJsonLong(b, "b_lot", "buy_lot", "buy_volume", "lot", "vol", "volume")
-                        val buyAvg = parseJsonDouble(b, "b_avg", "buy_avg", "buy_average", "avg_buy_price", "avg_price", "avg", "average")
+                        val buyVal = parseJsonDouble(b, "bval", "bvalv", "b_val", "buy_value", "buy_val", "val", "value", "net_val", "net_value")
+                        val buyLot = parseJsonLong(b, "blot", "blotv", "b_lot", "buy_lot", "buy_volume", "lot", "vol", "volume", "net_lot", "net_volume")
+                        val buyAvg = parseJsonDouble(b, "netbs_buy_avg_price", "b_avg", "buy_avg", "buy_average", "avg_buy_price", "avg_price", "avg", "average", "price")
                             .let { if (it > 0.0) it else if (buyLot > 0) buyVal / (buyLot * 100.0) else 0.0 }
                         val netVal = buyVal.toLong()
                         parsedBrokers.add(BrokerItem(code, netVal, buyVal, buyLot, buyAvg, isBuyer = true))
@@ -877,9 +891,9 @@ class OrderBookRepository(
                         val b = sellersArr.optJSONObject(i) ?: continue
                         val code = parseBrokerCode(b)
                         if (code.isEmpty()) continue
-                        val sellVal = parseJsonDouble(b, "s_val", "sell_value", "sell_val", "val", "value", "net_val", "net_value")
-                        val sellLot = parseJsonLong(b, "s_lot", "sell_lot", "sell_volume", "lot", "vol", "volume")
-                        val sellAvg = parseJsonDouble(b, "s_avg", "sell_avg", "sell_average", "avg_sell_price", "avg_price", "avg", "average")
+                        val sellVal = parseJsonDouble(b, "sval", "svalv", "s_val", "sell_value", "sell_val", "val", "value", "net_val", "net_value")
+                        val sellLot = parseJsonLong(b, "slot", "slotv", "s_lot", "sell_lot", "sell_volume", "lot", "vol", "volume", "net_lot", "net_volume")
+                        val sellAvg = parseJsonDouble(b, "netbs_sell_avg_price", "s_avg", "sell_avg", "sell_average", "avg_sell_price", "avg_price", "avg", "average", "price")
                             .let { if (it > 0.0) it else if (sellLot > 0) sellVal / (sellLot * 100.0) else 0.0 }
                         val netVal = -sellVal.toLong()
                         parsedBrokers.add(BrokerItem(code, netVal, sellVal, sellLot, sellAvg, isBuyer = false))
