@@ -1479,24 +1479,8 @@ class OrderBookRepository(
             }
 
             val newAnalyses = analyzeSnapshots(currentSnapshots, isMovers = true)
-            val currentList = _moversFlow.value.toMutableList()
-            if (currentList.isEmpty()) {
-                val sorted = newAnalyses.sortedByDescending { it.score }
-                _moversFlow.value = sorted
-            } else {
-                val newMap = newAnalyses.associateBy { it.ticker }
-                val merged = currentList.map { existing ->
-                    newMap[existing.ticker] ?: existing
-                }.toMutableList()
+            _moversFlow.value = newAnalyses.sortedByDescending { it.score }.take(50)
 
-                for (item in newAnalyses) {
-                    if (merged.none { it.ticker == item.ticker }) {
-                        merged.add(item)
-                    }
-                }
-                val sorted = merged.sortedByDescending { it.score }
-                _moversFlow.value = sorted
-            }
             refreshTopPicks()
             updatePortfolioPositions(_moversFlow.value)
 
@@ -1536,21 +1520,7 @@ class OrderBookRepository(
                             // FIX HARGA LONCAT: Guard scraper movers menggunakan % (10%) bukan tick count
                             // Sebelumnya 4-tick terlalu ketat dan memblokir lonjakan sah
                             // Sekarang: jika harga scraper tidak wajar (>10% dari harga real-time), abaikan
-                            var priceToUse = if (lastPrice > 0) {
-                                if (existingPriceForGuard > 0) {
-                                    val pctDiff = kotlin.math.abs(existingPriceForGuard - lastPrice).toDouble() / existingPriceForGuard
-                                    if (pctDiff > 0.10) {
-                                        // Scraper telat/salah baca — pertahankan harga real-time yang sudah ada
-                                        existingPriceForGuard
-                                    } else {
-                                        lastPrice
-                                    }
-                                } else {
-                                    lastPrice
-                                }
-                            } else {
-                                existingPriceForGuard
-                            }
+                            var priceToUse = if (lastPrice > 0) lastPrice else existingPriceForGuard
                             if (priceToUse <= 0) return@async null
 
                             // Sanitize terhadap existing orderbook jika tersedia
@@ -1666,9 +1636,13 @@ class OrderBookRepository(
                 val merged = analyses.toMutableList()
 
                 // Pertahankan emiten lama jika belum ter-scrape di siklus saat ini (karena rotasi Top Movers vs Top Freq)
+                val now = System.currentTimeMillis()
                 for (item in currentList) {
                     if (!newMap.containsKey(item.ticker)) {
-                        merged.add(item)
+                        // Jika usianya kurang dari 5 menit, pertahankan. Jika lebih, buang (stale data).
+                        if (now - item.lastUpdated < 300_000L) {
+                            merged.add(item)
+                        }
                     }
                 }
                 val sorted = merged.sortedByDescending { it.score }.take(60) // Limit to top 60 best stocks

@@ -124,6 +124,99 @@
             var currentScraped = [];
             var seen = {};
 
+            function extractDataFromTds(tds) {
+                var res = { price: 0, changePct: 0.0, turnoverStr: "" };
+                if (!tds || tds.length < 2) return res;
+
+                // Cari Turnover
+                for (var c = 1; c < tds.length; c++) {
+                    var cText = (tds[c].innerText || '').trim();
+                    var toMatch = cText.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
+                    if (toMatch && !res.turnoverStr) res.turnoverStr = toMatch[0];
+                }
+
+                // Cari Change %
+                var pctColIdx = -1;
+                for (var c = 1; c < tds.length; c++) {
+                    var cText = (tds[c].innerText || '').trim();
+                    var pMatch = cText.match(/([+-]?\d+[.,]\d+)%/);
+                    if (pMatch) {
+                        res.changePct = parseFloat(pMatch[1].replace(',', '.'));
+                        pctColIdx = c;
+                        break;
+                    }
+                }
+
+                // Cek apakah ini Top Frequency dengan kombinasi state & tombol aktif
+                var isFreqTab = (window._moversActiveCategory === 'FREQ');
+                var activeBtns = document.querySelectorAll('button[class*="active"], div[class*="active"], th');
+                for (var bi = 0; bi < activeBtns.length; bi++) {
+                    var txt = (activeBtns[bi].innerText || '').toLowerCase();
+                    if (txt.indexOf('freq') >= 0) isFreqTab = true;
+                    if (txt.indexOf('movers') >= 0 || txt.indexOf('value') >= 0) isFreqTab = false;
+                }
+
+                // Ekstrak Price dengan aman, HINDARI kolom Freq (kolom 1 pada Top Frequency)
+                // Harga hampir selalu berada TEPAT DI SEBELUM kolom persen, atau bergabung dengannya
+                if (pctColIdx !== -1) {
+                    var sameColText = (tds[pctColIdx].innerText || '').trim();
+                    var tokens = sameColText.split(/\s+/);
+                    if (tokens.length >= 2) {
+                        var pClean = tokens[0].replace(/[.,]/g, '');
+                        var pVal = parseInt(pClean, 10);
+                        if (!isNaN(pVal) && pVal >= 1 && pVal <= 99000 && !tokens[0].includes('%') && !tokens[0].startsWith('+') && !tokens[0].startsWith('-') && !tokens[0].startsWith('(')) {
+                            res.price = pVal;
+                        }
+                    }
+
+                    if (res.price === 0 && pctColIdx > 0) {
+                        var prevIdx = pctColIdx - 1;
+                        if (isFreqTab && prevIdx === 1) {
+                            // BAHAYA: Jika di mode FREQ dan kolom sebelum persen adalah tds[1], itu PASTI kolom Freq (bukan harga).
+                            // Ini terjadi jika layar sempit dan kolom Harga disembunyikan oleh Stockbit.
+                            // Kita abaikan saja daripada mengambil nilai frekuensi sebagai harga.
+                        } else {
+                            var prevColText = (tds[prevIdx].innerText || '').trim();
+                            var prevTokens = prevColText.split(/\s+/);
+                            for (var k = prevTokens.length - 1; k >= 0; k--) {
+                                var t = prevTokens[k].trim();
+                                if (t.startsWith('+') || t.startsWith('-') || t.includes('%') || t.startsWith('(') || /[a-zA-Z]/.test(t)) continue;
+                                var clean = t.replace(/[.,]/g, '');
+                                var val = parseInt(clean, 10);
+                                if (!isNaN(val) && val >= 1 && val <= 99000) {
+                                    res.price = val;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Fallback klasik jika tidak ada persen (Hanya ambil dari td yg bukan Freq jika di mode FREQ)
+                if (res.price === 0) {
+                    var startCol = isFreqTab ? 2 : 1; 
+                    for (var colIdx = startCol; colIdx <= Math.min(3, tds.length - 1); colIdx++) {
+                        var priceCellText = (tds[colIdx].innerText || '').trim();
+                        if (/^(open|high|low|vol|val|volume|turnover|market\s*cap)$/i.test(priceCellText)) continue;
+                        var pTokens = priceCellText.split(/\s+/);
+                        var foundFallback = false;
+                        for (var pt = 0; pt < pTokens.length; pt++) {
+                            var pTok = pTokens[pt].trim();
+                            if (pTok.startsWith('+') || pTok.startsWith('-') || pTok.includes('%') || pTok.startsWith('(') || /[a-zA-Z]/.test(pTok)) continue;
+                            var pClean2 = pTok.replace(/[.,]/g, '');
+                            var pVal2 = parseInt(pClean2, 10);
+                            if (!isNaN(pVal2) && pVal2 >= 1 && pVal2 <= 99000) {
+                                res.price = pVal2;
+                                foundFallback = true;
+                                break;
+                            }
+                        }
+                        if (foundFallback) break;
+                    }
+                }
+                return res;
+            }
+
             var container = document.querySelector('#widget-container');
             var scope = container || document;
 
@@ -144,6 +237,15 @@
             // 1. Parser Utama: Baris Tabel langsung (tbody tr)
             var trRows = scope.querySelectorAll('#widget-container tbody tr, tbody tr');
             trRows.forEach(function(row) {
+                // HINDARI TABEL PORTFOLIO / ORDERBOOK!
+                var table = row.closest('table');
+                if (table) {
+                    var tText = (table.innerText || '').toLowerCase();
+                    if (tText.indexOf('portfolio') >= 0 || tText.indexOf('return') >= 0 || tText.indexOf('avg') >= 0 || tText.indexOf('lot') >= 0) {
+                        return; // Skip row ini karena ini kemungkinan portofolio atau orderbook
+                    }
+                }
+
                 var tds = row.querySelectorAll('td');
                 if (tds.length < 2) return;
 
@@ -164,47 +266,19 @@
 
                 if (!ticker || seen[ticker]) return;
 
-                var price = 0;
-                var changePct = 0.0;
-                var turnoverStr = "";
-
-                // 1. Ekstrak Price dari td[1], td[2], atau td[3]
-                // Stockbit sering menggabungkan Price dan % di satu cell (misal: "185 +5 (+2.78%)")
-                for (var colIdx = 1; colIdx <= Math.min(3, tds.length - 1); colIdx++) {
-                    var priceCellText = (tds[colIdx].innerText || '').trim();
-                    if (/^(open|high|low|vol|val|volume|turnover|market\s*cap)$/i.test(priceCellText)) continue;
-                    var pTokens = priceCellText.split(/\s+/);
-                    for (var pt = 0; pt < pTokens.length; pt++) {
-                        var pTok = pTokens[pt].trim();
-                        // Reject jika token adalah perubahan harga (+/-), persentase murni, tanda kurung, atau teks
-                        if (pTok.startsWith('+') || pTok.startsWith('-') || pTok.includes('%') || pTok.startsWith('(') || /[a-zA-Z]/.test(pTok)) continue;
-                        var pClean = pTok.replace(/[.,]/g, '');
-                        var pVal = parseInt(pClean, 10);
-                        if (!isNaN(pVal) && pVal >= 1 && pVal <= 99000) {
-                            price = pVal;
-                            break;
-                        }
-                    }
-                    if (price > 0) break;
+                if (ticker === 'EKAD' && window.Android && window.Android.onMoversDebug) {
+                    window.Android.onMoversDebug("EKAD HTML: " + row.outerHTML);
                 }
 
-                // 2. Ekstrak Change % dan Turnover dari seluruh baris (tanpa menimpa harga)
-                for (var c = 1; c < tds.length; c++) {
-                    var cText = (tds[c].innerText || '').trim();
-                    var toMatch = cText.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
-                    if (toMatch && !turnoverStr) turnoverStr = toMatch[0];
+                var data = extractDataFromTds(tds);
 
-                    var pMatch = cText.match(/([+-]?\d+[.,]\d+)%/);
-                    if (pMatch && changePct === 0.0) changePct = parseFloat(pMatch[1].replace(',', '.'));
-                }
-
-                if (ticker && price > 0) {
+                if (ticker && data.price > 0) {
                     seen[ticker] = true;
                     currentScraped.push({
                         ticker: ticker,
-                        lastPrice: price,
-                        changePercent: changePct,
-                        turnover: turnoverStr,
+                        lastPrice: data.price,
+                        changePercent: data.changePct,
+                        turnover: data.turnoverStr,
                         source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
                     });
                 }
@@ -216,54 +290,34 @@
                 var ticker = (img.getAttribute('alt') || '').trim().toUpperCase();
                 if (!ticker || !/^[A-Z]{2,5}$/.test(ticker) || seen[ticker]) return;
 
-                var price = 0;
-                var changePct = 0;
-                var turnoverStr = "";
-
                 var row = img.closest('tr');
                 if (row) {
-                    var tds = row.querySelectorAll('td');
-                    if (tds.length >= 2) {
-                        for (var colIdx = 1; colIdx <= Math.min(3, tds.length - 1); colIdx++) {
-                            var cellText = (tds[colIdx].innerText || '').trim();
-                            if (/^(open|high|low|vol|val|volume|turnover|market\s*cap)$/i.test(cellText)) continue;
-                            var tokens = cellText.split(/\s+/);
-                            for (var k = 0; k < tokens.length; k++) {
-                                var t = tokens[k].trim();
-                                if (t.startsWith('+') || t.startsWith('-') || t.includes('%') || t.startsWith('(') || /[a-zA-Z]/.test(t)) continue;
-                                var clean = t.replace(/[.,]/g, '');
-                                var val = parseInt(clean, 10);
-                                if (!isNaN(val) && val >= 1 && val <= 99000) {
-                                    price = val;
-                                    break;
-                                }
-                            }
-                            if (price > 0) break;
-                        }
-
-                        for (var c = 1; c < tds.length; c++) {
-                            var cCell = (tds[c].innerText || '').trim();
-                            var valMatch = cCell.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
-                            if (valMatch && !turnoverStr) {
-                                turnoverStr = valMatch[0];
-                            }
-                            var pctMatch = cCell.match(/([+-]?\d+[.,]\d+)%/);
-                            if (pctMatch && changePct === 0) {
-                                changePct = parseFloat(pctMatch[1].replace(',', '.'));
-                            }
+                    // HINDARI TABEL PORTFOLIO / ORDERBOOK!
+                    var table = row.closest('table');
+                    if (table) {
+                        var tText = (table.innerText || '').toLowerCase();
+                        if (tText.indexOf('portfolio') >= 0 || tText.indexOf('return') >= 0 || tText.indexOf('avg') >= 0 || tText.indexOf('lot') >= 0) {
+                            return; // Skip row ini
                         }
                     }
-                }
 
-                if (ticker && price > 0) {
-                    seen[ticker] = true;
-                    currentScraped.push({
-                        ticker: ticker,
-                        lastPrice: price,
-                        changePercent: changePct,
-                        turnover: turnoverStr,
-                        source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
-                    });
+                    var tds = row.querySelectorAll('td');
+                    if (tds.length >= 2) {
+                        if (ticker === 'EKAD' && window.Android && window.Android.onMoversDebug) {
+                            window.Android.onMoversDebug("EKAD HTML (P2): " + row.outerHTML);
+                        }
+                        var data = extractDataFromTds(tds);
+                        if (ticker && data.price > 0) {
+                            seen[ticker] = true;
+                            currentScraped.push({
+                                ticker: ticker,
+                                lastPrice: data.price,
+                                changePercent: data.changePct,
+                                turnover: data.turnoverStr,
+                                source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
+                            });
+                        }
+                    }
                 }
             });
 
@@ -280,44 +334,72 @@
                         var turnoverStr = "";
                         var row = link.closest('tr');
                         if (row) {
-                            var tds = row.querySelectorAll('td');
-                            for (var colIdx = 1; colIdx <= Math.min(3, tds.length - 1); colIdx++) {
-                                var cellText = (tds[colIdx].innerText || '').trim();
-                                if (/^(open|high|low|vol|val|volume|turnover|market\s*cap)$/i.test(cellText)) continue;
-                                var tokens = cellText.split(/\s+/);
-                                for (var k = 0; k < tokens.length; k++) {
-                                    var t = tokens[k].trim();
-                                    if (t.startsWith('+') || t.startsWith('-') || t.includes('%') || t.startsWith('(') || /[a-zA-Z]/.test(t)) continue;
-                                    var clean = t.replace(/[.,]/g, '');
-                                    var val = parseInt(clean, 10);
-                                    if (!isNaN(val) && val >= 1 && val <= 99000) {
-                                        price = val;
-                                        break;
-                                    }
+                            // HINDARI TABEL PORTFOLIO / ORDERBOOK!
+                            var table = row.closest('table');
+                            if (table) {
+                                var tText = (table.innerText || '').toLowerCase();
+                                if (tText.indexOf('portfolio') >= 0 || tText.indexOf('return') >= 0 || tText.indexOf('avg') >= 0 || tText.indexOf('lot') >= 0) {
+                                    return; // Skip row ini
                                 }
-                                if (price > 0) break;
                             }
-                            for (var c = 1; c < tds.length; c++) {
-                                var cCell = (tds[c].innerText || '').trim();
-                                var valMatch = cCell.match(/(\d+[.,]?\d*)\s*([KMBTkmbt]|Jt|M|B|T)/);
-                                if (valMatch && !turnoverStr) turnoverStr = valMatch[0];
-                                var pctMatch = cCell.match(/([+-]?\d+[.,]\d+)%/);
-                                if (pctMatch && changePct === 0.0) changePct = parseFloat(pctMatch[1].replace(',', '.'));
+                            var tds = row.querySelectorAll('td');
+                            if (ticker === 'EKAD' && window.Android && window.Android.onMoversDebug) {
+                                window.Android.onMoversDebug("EKAD HTML (P3-symbol): " + row.outerHTML);
                             }
-                        }
-                        if (price > 0) {
-                            seen[ticker] = true;
-                            currentScraped.push({
-                                ticker: ticker,
-                                lastPrice: price,
-                                changePercent: changePct,
-                                turnover: turnoverStr,
-                                source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
-                            });
+                            var data = extractDataFromTds(tds);
+                            if (data.price > 0) {
+                                seen[ticker] = true;
+                                currentScraped.push({
+                                    ticker: ticker,
+                                    lastPrice: data.price,
+                                    changePercent: data.changePct,
+                                    turnover: data.turnoverStr,
+                                    source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
+                                });
+                            }
                         }
                     }
                 });
             }
+
+            // 3. Parser Ekstrim: Cari semua link yg memiliki atribut href saham
+            var links = scope.querySelectorAll('a[href*="/stocks/"]');
+            links.forEach(function(link) {
+                var href = link.getAttribute('href') || '';
+                var match = href.match(/\/stocks\/([A-Z]{2,5})\b/i);
+                if (match) {
+                    var ticker = match[1].toUpperCase();
+                    if (!seen[ticker]) {
+                        var row = link.closest('tr');
+                        if (row) {
+                            // HINDARI TABEL PORTFOLIO
+                            var table = row.closest('table');
+                            if (table) {
+                                var tText = (table.innerText || '').toLowerCase();
+                                if (tText.indexOf('portfolio') >= 0 || tText.indexOf('return') >= 0 || tText.indexOf('avg') >= 0 || tText.indexOf('lot') >= 0) {
+                                    return; // Skip
+                                }
+                            }
+
+                            var tds = row.querySelectorAll('td');
+                            if (ticker === 'EKAD' && window.Android && window.Android.onMoversDebug) {
+                                window.Android.onMoversDebug("EKAD HTML (P3): " + row.outerHTML);
+                            }
+                            var data = extractDataFromTds(tds);
+                            if (data.price > 0) {
+                                seen[ticker] = true;
+                                currentScraped.push({
+                                    ticker: ticker,
+                                    lastPrice: data.price,
+                                    changePercent: data.changePct,
+                                    turnover: data.turnoverStr,
+                                    source: (window._moversActiveCategory === 'FREQ') ? 'Top Frequency' : 'Top Movers'
+                                });
+                            }
+                        }
+                    }
+                }
+            });
 
             // Simpan ke cache kategori masing-masing
             if (currentScraped.length > 0) {

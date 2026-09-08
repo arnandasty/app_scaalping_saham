@@ -299,19 +299,19 @@ object ScoringEngine {
         if (bandarDetector != null) {
             when (bandarDetector.accdistStatus) {
                 "Big Acc" -> {
-                    bandarScore = 5
+                    bandarScore = 3
                     isBandarBigAcc = true
                 }
                 "Acc" -> {
-                    bandarScore = 3
+                    bandarScore = 1
                     isBandarAcc = true
                 }
                 "Dist" -> {
-                    bandarScore = -4
+                    bandarScore = -2
                     isBandarDist = true
                 }
                 "Big Dist" -> {
-                    bandarScore = -8
+                    bandarScore = -4
                     isBandarBigDist = true
                 }
             }
@@ -319,25 +319,25 @@ object ScoringEngine {
             // Klasifikasi Ritel vs Bandar Nyata (Konteks Pendukung, Bukan Penentu Mutlak Scalping)
             when (bandarDetector.bandarProfile) {
                 "RETAIL_TRAP" -> {
-                    // Perangkap ritel: Hanya diberi penalti ringan, keputusan scalping tetap di Tape Reading
-                    bandarScore -= 4
+                    // Perangkap ritel: Hanya diberi penalti sangat ringan, keputusan scalping tetap di Tape Reading
+                    bandarScore -= 2
                     isRetailTrap = true
                 }
                 "RETAIL_MOMENTUM" -> {
                     // Momentum ritel ramai: Likuiditas tinggi untuk scalping cepat
-                    bandarScore += 2
+                    bandarScore += 1
                     isRetailMomentum = true
                 }
                 "PURE_ACCUMULATION" -> {
-                    bandarScore += 4
+                    bandarScore += 2
                     isPureBandarAcc = true
                 }
                 "SCALPER_ACTIVE" -> {
-                    bandarScore += 3
+                    bandarScore += 1
                     isScalperBandar = true
                 }
                 "DISTRIBUTION" -> {
-                    bandarScore -= 5
+                    bandarScore -= 2
                     isBandarDist = true
                 }
             }

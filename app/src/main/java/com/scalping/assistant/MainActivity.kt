@@ -127,9 +127,10 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            handler.postDelayed(this, 1000L) // Ubah delay scraping jadi 1 detik agar stream lebih update
+            handler.postDelayed(this, 500L) // Ubah delay scraping jadi 500ms agar stream lebih update
         }
     }
+
 
     private val sessionTimerRunnable = object : Runnable {
         override fun run() {
@@ -568,7 +569,7 @@ class MainActivity : AppCompatActivity() {
         if (clean.isEmpty()) return
         val now = System.currentTimeMillis()
         val last = lastRequestedBandar[clean] ?: 0L
-        if (!force && now - last < 10_000L) return
+        if (!force && now - last < 2_000L) return
         lastRequestedBandar[clean] = now
 
         fetchBandarDetectorNative(clean, isMultiDay = false)
@@ -579,7 +580,7 @@ class MainActivity : AppCompatActivity() {
         if (clean.isEmpty()) return
         val now = System.currentTimeMillis()
         val last = lastRequestedBandarMultiDay[clean] ?: 0L
-        if (!force && now - last < 10_000L) return
+        if (!force && now - last < 2_000L) return
         lastRequestedBandarMultiDay[clean] = now
 
         fetchBandarDetectorNative(clean, isMultiDay = true)
