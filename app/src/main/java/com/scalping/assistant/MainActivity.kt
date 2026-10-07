@@ -79,7 +79,7 @@ class MainActivity : AppCompatActivity() {
     private val TOTAL_WEIGHT = 100f
 
     private lateinit var pagerAdapter: com.scalping.assistant.ui.RankingPagerAdapter
-    private lateinit var yahooRepo: YahooFinanceRepository
+    lateinit var yahooRepo: YahooFinanceRepository
     lateinit var orderBookRepo: OrderBookRepository
 
     private val handler = Handler(Looper.getMainLooper())
@@ -503,8 +503,48 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun navigateToPortfolioTab() {
-        // Tab Portfolio ada di index 3
-        viewPager.setCurrentItem(3, true)
+        // Tab Portfolio kini ada di index 4 (setelah tab Screener ditambahkan)
+        viewPager.setCurrentItem(4, true)
+    }
+
+    /**
+     * Membuka emiten dari tab Screener di WebView orderbook Stockbit.
+     *
+     * Pindah ke tab Manual lebih dulu karena WebView orderbook berada di panel atas
+     * yang selalu terlihat. Emiten yang dibuka akan melewati pipeline scrape yang
+     * sudah ada (OrderBookRepository), sehingga analisis real-time tetap berjalan.
+     */
+    fun openTickerFromScreener(ticker: String) {
+        val clean = ticker.trim().uppercase()
+        if (clean.isEmpty()) return
+
+        // Pindah ke tab Manual agar pengguna melihat hasil scrape emiten ini.
+        viewPager.setCurrentItem(0, true)
+
+        tvStatusLog.text = "🔍 Membuka $clean dari Screener TradingView..."
+
+        // Isi kotak pencarian Stockbit lewat injector yang sudah ada, atau buka langsung.
+        if (::webView.isInitialized) {
+            webView.post {
+                webView.evaluateJavascript(
+                    "(function(){" +
+                        "try{" +
+                        "var inp=document.querySelector('input[data-cy=\"top-navbar-search-input-desktop\"], #stockbit-header-web input[type=\"search\"]');" +
+                        "if(inp){" +
+                        "var setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;" +
+                        "if(setter){setter.call(inp,'$clean');}else{inp.value='$clean';}" +
+                        "inp.dispatchEvent(new Event('input',{bubbles:true}));" +
+                        "inp.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,bubbles:true}));" +
+                        "return 'filled';" +
+                        "}" +
+                        "window.location.href='https://stockbit.com/symbol/$clean';" +
+                        "return 'navigated';" +
+                        "}catch(e){return 'error:'+e.message;}" +
+                        "})()",
+                    null
+                )
+            }
+        }
     }
 
     // Backward compat
@@ -1041,7 +1081,8 @@ class MainActivity : AppCompatActivity() {
                 0 -> "Manual"
                 1 -> "Movers"
                 2 -> "Top Picks"
-                3 -> "💼 Portfolio"
+                3 -> "Screener"
+                4 -> "💼 Port"
                 else -> ""
             }
         }.attach()
@@ -1082,9 +1123,9 @@ class MainActivity : AppCompatActivity() {
             orderBookRepo.portfolioFlow.collectLatest { trades ->
                 runOnUiThread {
                     pagerAdapter.updatePortfolioData(trades)
-                    // Update badge jumlah posisi aktif di tab Portfolio
+                    // Update badge jumlah posisi aktif di tab Portfolio (kini indeks 4)
                     val activeCount = trades.count { it.isActive }
-                    tabLayout.getTabAt(3)?.text = if (activeCount > 0) "💼 Portfolio ($activeCount)" else "💼 Portfolio"
+                    tabLayout.getTabAt(4)?.text = if (activeCount > 0) "💼 Port ($activeCount)" else "💼 Port"
 
                     // TP Alert otomatis (Max 1x per 5 menit)
                     val now = System.currentTimeMillis()

@@ -116,4 +116,108 @@ Aplikasi ini ditenagai oleh tiga mesin utama yang berjalan secara asinkron:
 * **Fokus Utama:** Menguji debit aliran *Running Trade tick-by-tick* saat bursa resmi dibuka pukul 09:00:00 WIB, memvalidasi akurasi status akumulasi bandar, serta menguji respon proteksi Anti-Pucuk pada saham-saham yang melonjak tinggi.
 
 ---
+
+## 7. Integrasi TradingView Screener (Universe IHSG)
+
+### A. Latar Belakang & Verifikasi
+* **Tujuan:** Menyaring kandidat scalping dari **seluruh 844 emiten IDX**, bukan hanya saham teraktif dari Stockbit.
+* **Verifikasi kolom:** Seluruh **66 kolom** yang diuji diterima server (0 ditolak), sehingga skema kolom TradingView stabil dan permisif.
+* **⚠️ Temuan Kritis — Data Delay 10 Menit:**
+  * Payload WS quote `IDX:BBCA` mengembalikan `update_mode: "delayed_streaming_600"` dan feed bernama `IDX_DLY:BBCA`.
+  * **Konsekuensi:** Harga dari TradingView tertinggal 10 menit. Karena itu screening ini **hanya untuk menyaring kandidat**, bukan penentu harga entry. Harga terkini, orderbook, dan running trade tetap wajib dari Stockbit WebView.
+  * Zona waktu TradingView adalah `Asia/Bangkok` (GMT+7) — identik dengan WIB, tidak perlu konversi.
+
+### B. Operator Filter yang Terverifikasi
+* **Diterima:** `equal`, `greater`, `less`, `in_range`
+* **DITOLAK (HTTP 400):** `above`, `below`, `not_equal`, `match`, `crosses_up`, `crosses_down`
+
+### C. Komponen Baru
+| Berkas | Peran |
+| :--- | :--- |
+| `TradingViewScreenerRepository.kt` | Akses scanner IDX, 6 preset filter, skoring hybrid dua tahap, cache 5 menit |
+| `ScreenerScoringEngine.kt` | Skor 0-100 dari 8 komponen indikator & struktur (bukan orderbook) |
+| `SmartMoneyAnalyzer.kt` | Deteksi swing, struktur HH/HL/LH/LL, BOS, CHoCH, Order Block, Fibonacci dua tarikan |
+| `ScreenerFragment.kt` | Tab Screener, chip preset, dialog rincian skor per komponen |
+| `ScreenerAdapter.kt` | Kartu hasil: badge skor, chip tren/OB, zona beli/jual Fibonacci |
+| `fragment_screener.xml` | Layout tab + peringatan delay yang selalu terlihat |
+| `item_screener_stock.xml` | Layout kartu kandidat |
+| `bg_score_green/yellow/red.xml` | Warna badge skor |
+| `bg_dialog_sheet.xml` | Latar dialog rincian skor |
+
+### D. Skoring (0-100) — BEDA dari `ScoringEngine.kt`
+
+Skor di tab Screener **sengaja berbeda** dari `ScoringEngine.kt` milik aplikasi:
+
+* `ScoringEngine.kt` → berbasis **orderbook** (bid/offer, delta volume, tembok) + sesi bursa + bandar detector.
+* `ScreenerScoringEngine.kt` → murni berbasis **indikator & struktur pasar**.
+
+| # | Komponen | Bobot | Dasar Penilaian |
+| :-: | :--- | :-: | :--- |
+| 1 | Volume / RVOL | 20 | RVOL ≥5× (20) s.d. <1× (0) |
+| 2 | Bandarmology | 15 | `MoneyFlow` 0-100 + rating teknikal sebagai konfirmasi |
+| 3 | MACD | 10 | Histogram (`MACD.macd` - `MACD.signal`) di atas nol & di atas signal |
+| 4 | RSI 14 | 10 | 60-77 paling ideal; >78 dianggap terlalu panas |
+| 5 | Moving Average | 15 | Susunan EMA9>EMA21 + harga di atas EMA20/50/200 |
+| 6 | Fibonacci | 10 | Konfirmasi beli 0,5-0,618 pada tarikan premier |
+| 7 | Smart Money (OB/BOS/CHoCH) | 15 | BOS bullish (7), CHoCH bullish (5), harga di Order Block (3) |
+| 8 | Struktur Pasar | 5 | Bullish HH/HL (5), Ranging (2), Bearish LH/LL (0) |
+| | **Total** | **100** | |
+
+**Grade:** ≥80 SANGAT KUAT 🔥 · ≥65 KUAT ✅ · ≥50 SEDANG 🟡 · ≥35 LEMAH ⚠️ · <35 SANGAT LEMAH ❌
+
+**Alur hybrid dua tahap:**
+1. **Tahap 1 (cepat)** — 1 request snapshot untuk seluruh universe → semua kandidat diskor dari indikator.
+2. **Tahap 2 (akurat)** — 20 kandidat teratas diambil candle 15m nyata-nya, lalu komponen SMC/Order Block/Fibonacci dihitung ulang secara paralel.
+3. Hasil akhir **selalu diurutkan dari skor tertinggi**.
+4. Kartu tanpa analisis candle diberi tanda `snapshot` (skor maksimal 70) vs `🧠 SMC` (maksimal 100), agar perbandingan tetap jujur.
+
+### E. Fibonacci DUA TARIKAN (sesuai ketentuan pemakaian)
+
+Fibonacci **tidak** ditarik sekali dari rentang ekstrem, melainkan dua kali:
+
+| Tarikan | Leg | Fungsi |
+| :--- | :--- | :--- |
+| **1 (premier)** | LOW PREMIER → HIGH PREMIER | **Zona beli** 0,5-0,618 |
+| **2 (sekunder)** | HIGH SEKUNDER → LOW SEKUNDER | **Zona jual** 0,5-0,618 |
+
+**Status setup yang dinilai:**
+
+| Status | Arti | Poin |
+| :--- | :--- | :-: |
+| `VALID` | Sudah tembus ke bawah 0,5 **dan** tidak lebih rendah dari 0,618 | 10 |
+| `WAITING` | Pola premier ada, belum koreksi ke 0,5 | 5 |
+| `IN_SELL` | Harga sudah di zona jual tarikan sekunder (terlambat entry) | 2 |
+| `OVERSHOOT` | Koreksi menembus 0,618 → setup beli gugur | 1 |
+| `NONE` | Pola premier belum terbentuk | 0 |
+
+Titik masuk (entry) dan titik jual (exit) ditampilkan langsung di kartu & dialog rincian skor.
+
+**Ambang adaptif:** Definisi "kenaikan signifikan" dan "order block" memakai ambang adaptif = `0,8 × rata-rata gerak lookahead candle`, dibatasi 0,5%-3,0%. Kalibrasi pada 9 emiten IDX (BBCA ~0,8% s.d. GOTO ~3,7% per 5 candle) — ambang tetap membuat ANTM tidak pernah terdeteksi Order Block.
+
+**Lookback swing adaptif:** Diturunkan otomatis bila swing terlalu sedikit, karena saham bertick kasar (harga puluhan rupiah, satuan 1 rupiah) punya banyak high/low kembar. Bila tidak ada swing low sebelum swing high, titik low premier memakai low candle terendah pada rentang tersebut — sehingga saham seperti GOTO (~Rp 30) tetap bisa dianalisis. Status tetap dilaporkan jujur `NONE` hanya bila kenaikannya memang tidak signifikan.
+
+### F. Preset Penyaringan
+| Preset | Filter |
+| :--- | :--- |
+| 🚀 Early Momentum | naik +0.5%–+5%, RVOL 2–50×, vol >1 Jt (selaras strategi "Akan Naik") |
+| 🔥 Volume Spike | RVOL 3–50×, vol >1 Jt |
+| 📈 Top Gainers | naik >3%, vol >500 Rb |
+| ✅ Tren Naik | Recommend ≥0.3, RSI 45-75, vol >500 Rb |
+| 💎 Oversold | RSI <35, vol >500 Rb |
+| Semua Aktif | vol >1 Jt |
+
+* **Batas atas RVOL 50×** dipasang untuk membuang saham baru listing — verifikasi menemukan `IDX:ENAK` bernilai 122× (tidak wajar).
+
+### G. Alur Integrasi
+1. Tab **Screener** berada di indeks 3 (setelah Top Picks) → **Portfolio bergeser ke indeks 4**.
+2. Preset **Early Momentum** dimuat otomatis saat tab dibuka.
+3. Menekan kartu → muncul **dialog rincian skor** (poin & alasan tiap komponen + level Fibonacci dua tarikan). Tombol "Buka di Stockbit" memindahkan ke tab Manual + membuka emiten di orderbook + meminta data Bandar Detector.
+4. Setelah dibuka, emiten melewati pipeline lama (OrderFlow + Teknikal + ScoringEngine) sehingga sinyal entry tetap berbasis data real-time.
+
+### H. Status
+* ✅ APK debug berhasil di-build (`app-debug.apk`) — kompilasi Kotlin & resource tervalidasi.
+* ✅ Logika SMC & Fibonacci dua tarikan divalidasi dengan candle 15m nyata (skrip port Node di folder scratch artifact) pada 6 emiten: BBCA, BBRI, ANTM, TLKM, GOTO, SMRA.
+* ⏳ **Belum diuji di device/live market.** Perlu pengujian saat bursa buka.
+
+---
 *Dokumen ini diperbarui secara berkala dan mencakup seluruh perkembangan arsitektur dan strategi scalping.*

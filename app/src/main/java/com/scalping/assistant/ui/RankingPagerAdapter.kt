@@ -11,13 +11,15 @@ class RankingPagerAdapter(activity: FragmentActivity) : FragmentStateAdapter(act
     private val manualFragment = RankingFragment()
     private val moversFragment = RankingFragment()
     private val topPicksFragment = RankingFragment()
+    val screenerFragment = ScreenerFragment()
     val portfolioFragment = PortfolioFragment()
 
     private val fragments = listOf(
         manualFragment,     // Tab 0: Manual
         moversFragment,     // Tab 1: Movers
         topPicksFragment,   // Tab 2: Top Picks
-        portfolioFragment   // Tab 3: Portfolio 💼
+        screenerFragment,   // Tab 3: Screener (TradingView, universe IDX)
+        portfolioFragment   // Tab 4: Portfolio 💼
     )
 
     override fun getItemCount(): Int = fragments.size
@@ -39,4 +41,7 @@ class RankingPagerAdapter(activity: FragmentActivity) : FragmentStateAdapter(act
     fun updatePortfolioData(trades: List<PortfolioTrade>) {
         portfolioFragment.updateData(trades)
     }
+
+    // Catatan: ScreenerFragment mengelola datanya sendiri (memanggil
+    // TradingViewScreenerRepository langsung), jadi tidak perlu method update di sini.
 }

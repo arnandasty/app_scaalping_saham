@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_panel"
+    android:orientation="vertical">
+
+    <!-- Baris preset penyaringan -->
+    <HorizontalScrollView
+        android:id="@+id/svScreenerPresets"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_card"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="6dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/llScreenerPresets"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
+    <!-- Baris pemilih timeframe: M15 (scalping) / H1 (swing pendek) / D1 (swing mingguan).
+         Fibonacci & struktur pasar dihitung ulang sesuai timeframe yang dipilih. -->
+    <LinearLayout
+        android:id="@+id/llScreenerTimeframes"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_panel"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp" />
+
+    <!-- Catatan keterbatasan data -->
+    <TextView
+        android:id="@+id/tvScreenerNotice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="5dp"
+        android:text="⚠️ Skor 0-100 dari Volume·Bandar·MACD·RSI·MA·Fibonacci·SMC·Struktur. Data IDX delay 10-15 mnt — untuk menyaring kandidat, bukan pemicu entry."
+        android:textColor="@color/signal_yellow"
+        android:textSize="10sp" />
+
+    <!-- Progress -->
+    <ProgressBar
+        android:id="@+id/pbScreenerLoading"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:indeterminate="true"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvScreener"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingBottom="8dp" />
+
+        <!-- Empty / status -->
+        <LinearLayout
+            android:id="@+id/layoutScreenerEmpty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔍"
+                android:textSize="32sp" />
+
+            <TextView
+                android:id="@+id/tvScreenerEmptyMsg"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="Pilih preset di atas untuk menyaring kandidat dari 844 emiten IDX."
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+</LinearLayout>

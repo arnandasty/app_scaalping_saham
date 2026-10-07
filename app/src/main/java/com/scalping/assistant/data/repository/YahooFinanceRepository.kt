@@ -24,18 +24,61 @@ data class DailyTechnicalSummary(
     val maAlignment: String = ""
 )
 
+/**
+ * Timeframe candle untuk analisis Fibonacci & struktur pasar (SMC).
+ *
+ * [interval] dan [range] mengikuti parameter API chart Yahoo Finance.
+ * [analysisWindow] adalah jumlah candle yang dipakai sebagai jendela analisis
+ * (diset mendekati jumlah candle yang benar-benar tersedia agar tidak sia-sia).
+ */
+enum class CandleTimeframe(
+    val label: String,
+    val interval: String,
+    val range: String,
+    val analysisWindow: Int
+) {
+    /** 15 menit x 5 hari (~111 candle). Paling cocok untuk scalping intraday. */
+    M15("M15", "15m", "5d", 120),
+
+    /** 1 jam x 1 bulan (~150 candle). Swing pendek 2-5 hari. */
+    H1("H1", "60m", "1mo", 150),
+
+    /** 1 hari x 6 bulan (~127 candle). Swing mingguan. */
+    D1("D1", "1d", "6mo", 130);
+
+    /** Kunci cache agar tiap timeframe punya cache sendiri. */
+    val cacheKey: String get() = "$interval|$range"
+}
+
 class YahooFinanceRepository {
 
-    // Cache candle per ticker untuk hemat request
+    // Cache candle per ticker+timeframe untuk hemat request.
     private val candleCache = mutableMapOf<String, Pair<Long, List<Candle>>>()
     private val CACHE_DURATION_MS = 60_000L // 1 menit
 
     private val dailyCache = mutableMapOf<String, Pair<Long, DailyTechnicalSummary>>()
     private val DAILY_CACHE_DURATION_MS = 300_000L // 5 menit
 
-    suspend fun fetchIntradayCandles(ticker: String): List<Candle> = withContext(Dispatchers.IO) {
+    /**
+     * Candle 15m (perilaku lama, dipertahankan agar pemanggil lama tidak berubah).
+     * Setara dengan [fetchCandles] memakai [CandleTimeframe.M15].
+     */
+    suspend fun fetchIntradayCandles(ticker: String): List<Candle> =
+        fetchCandles(ticker, CandleTimeframe.M15)
+
+    /**
+     * Candle untuk ticker pada timeframe tertentu.
+     *
+     * Cache dipisah per ticker + timeframe, jadi berpindah timeframe tidak
+     * saling menimpa hasil yang sudah diunduh.
+     */
+    suspend fun fetchCandles(
+        ticker: String,
+        timeframe: CandleTimeframe = CandleTimeframe.M15
+    ): List<Candle> = withContext(Dispatchers.IO) {
         val cleanTicker = ticker.trim().uppercase()
-        val cached = candleCache[cleanTicker]
+        val key = "$cleanTicker|${timeframe.cacheKey}"
+        val cached = candleCache[key]
         val now = System.currentTimeMillis()
 
         if (cached != null && (now - cached.first) < CACHE_DURATION_MS && cached.second.isNotEmpty()) {
@@ -44,7 +87,8 @@ class YahooFinanceRepository {
 
         try {
             val symbol = if (cleanTicker.endsWith(".JK")) cleanTicker else "$cleanTicker.JK"
-            val urlString = "https://query1.finance.yahoo.com/v8/finance/chart/$symbol?interval=15m&range=5d"
+            val urlString = "https://query1.finance.yahoo.com/v8/finance/chart/$symbol" +
+                "?interval=${timeframe.interval}&range=${timeframe.range}"
             val url = URL(urlString)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -61,7 +105,7 @@ class YahooFinanceRepository {
             val candles = parseCandles(response)
 
             if (candles.isNotEmpty()) {
-                candleCache[cleanTicker] = Pair(now, candles)
+                candleCache[key] = Pair(now, candles)
             }
 
             candles
