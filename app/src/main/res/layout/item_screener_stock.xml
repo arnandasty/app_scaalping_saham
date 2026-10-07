@@ -155,14 +155,14 @@
                 android:textSize="10sp" />
         </LinearLayout>
 
-        <!-- Baris 4: Sektor + catatan delay -->
+        <!-- Baris 4: Nama perusahaan + sektor + Fibonacci + gaya & catatan skor -->
         <TextView
             android:id="@+id/tvScreenerSector"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:ellipsize="end"
-            android:maxLines="1"
+            android:maxLines="2"
             android:text="Finance · data TradingView (delay 10 mnt)"
             android:textColor="@color/text_secondary"
             android:textSize="11sp"

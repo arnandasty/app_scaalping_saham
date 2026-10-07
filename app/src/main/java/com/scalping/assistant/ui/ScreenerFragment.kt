@@ -5,11 +5,14 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.ProgressBar
@@ -25,6 +28,9 @@ import com.scalping.assistant.data.repository.ScoredScreenerStock
 import com.scalping.assistant.data.repository.ScreenerPreset
 import com.scalping.assistant.data.repository.TradingViewScreenerRepository
 import com.scalping.assistant.data.repository.YahooFinanceRepository
+import com.scalping.assistant.engine.TradingStyle
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -57,17 +63,37 @@ class ScreenerFragment : Fragment() {
     private lateinit var rvScreener: RecyclerView
     private lateinit var layoutEmpty: LinearLayout
     private lateinit var tvEmptyMsg: TextView
+    private lateinit var llStyles: LinearLayout
     private lateinit var llPresets: LinearLayout
     private lateinit var llTimeframes: LinearLayout
     private lateinit var pbLoading: ProgressBar
+    private lateinit var etSearch: EditText
+    private lateinit var tvSearchClear: TextView
+    private lateinit var tvSearchHint: TextView
 
     private lateinit var adapter: ScreenerAdapter
     private var repo: TradingViewScreenerRepository? = null
+    private val styleChips = mutableMapOf<TradingStyle, TextView>()
     private val presetChips = mutableMapOf<ScreenerPreset, TextView>()
     private val timeframeChips = mutableMapOf<CandleTimeframe, TextView>()
-    private var selectedPreset = ScreenerPreset.EARLY_MOMENTUM
-    private var selectedTimeframe = CandleTimeframe.M15
+
+    /** Gaya trading aktif. Default SWING: sesuai kebutuhan swing 3-10 hari. */
+    private var selectedStyle = TradingStyle.SWING
+    private var selectedPreset = ScreenerPreset.forStyle(TradingStyle.SWING).first()
+    private var selectedTimeframe = TradingStyle.SWING.defaultTimeframe
     private var isLoading = false
+
+    /** Job debounce pencarian: dibatalkan saat ketikan berikutnya datang. */
+    private var searchJob: Job? = null
+
+    /** true bila daftar yang tampil berasal dari pencarian, bukan dari preset. */
+    private var inSearchMode = false
+
+    /**
+     * Pengaman saat kolom pencarian dikosongkan OLEH KODE (bukan oleh pengguna),
+     * supaya pengosongan itu tidak memicu pencarian/scan ulang yang tidak perlu.
+     */
+    private var suppressSearchWatcher = false
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -78,9 +104,13 @@ class ScreenerFragment : Fragment() {
         rvScreener = view.findViewById(R.id.rvScreener)
         layoutEmpty = view.findViewById(R.id.layoutScreenerEmpty)
         tvEmptyMsg = view.findViewById(R.id.tvScreenerEmptyMsg)
+        llStyles = view.findViewById(R.id.llScreenerStyles)
         llPresets = view.findViewById(R.id.llScreenerPresets)
         llTimeframes = view.findViewById(R.id.llScreenerTimeframes)
         pbLoading = view.findViewById(R.id.pbScreenerLoading)
+        etSearch = view.findViewById(R.id.etScreenerSearch)
+        tvSearchClear = view.findViewById(R.id.tvScreenerSearchClear)
+        tvSearchHint = view.findViewById(R.id.tvScreenerSearchHint)
 
         // Klik kartu = buka rincian skor (transparan per komponen), bukan langsung pindah.
         adapter = ScreenerAdapter { item -> showScoreBreakdown(item) }
@@ -93,8 +123,10 @@ class ScreenerFragment : Fragment() {
             ?: YahooFinanceRepository()
         repo = TradingViewScreenerRepository(yahooRepo)
 
+        buildStyleChips()
         buildPresetChips()
         buildTimeframeChips()
+        setupSearch()
         showEmpty("Pilih preset di atas untuk menyaring & memberi skor pada 844 emiten IDX.")
 
         return view
@@ -107,14 +139,96 @@ class ScreenerFragment : Fragment() {
     }
 
     // ============================================================
+    // GAYA TRADING CHIPS
+    // ============================================================
+
+    /**
+     * Membangun chip pemilih gaya trading.
+     *
+     * Gaya trading adalah pilihan PALING ATAS: ia menentukan bobot penilaian
+     * (daytrade menekankan likuiditas & aliran dana, swing menekankan tren)
+     * sekaligus preset penyaring dan timeframe default yang dipakai.
+     */
+    private fun buildStyleChips() {
+        llStyles.removeAllViews()
+        styleChips.clear()
+
+        llStyles.addView(TextView(requireContext()).apply {
+            text = "Gaya:"
+            textSize = 11f
+            setTextColor(Color.parseColor("#64748B"))
+            setPadding(0, 0, dp(8), 0)
+        })
+
+        for (style in TradingStyle.entries) {
+            val chip = TextView(requireContext()).apply {
+                text = style.label
+                textSize = 11f
+                setPadding(dp(12), dp(6), dp(12), dp(6))
+                gravity = Gravity.CENTER
+                setOnClickListener { onStyleSelected(style) }
+            }
+            chip.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(6) }
+
+            styleChips[style] = chip
+            llStyles.addView(chip)
+        }
+        updateStyleChipStyles()
+    }
+
+    private fun updateStyleChipStyles() {
+        for ((style, chip) in styleChips) {
+            if (style == selectedStyle) {
+                chip.setBackgroundResource(R.drawable.bg_chip_active_blue)
+                chip.setTextColor(Color.parseColor("#FFFFFF"))
+            } else {
+                chip.setBackgroundResource(R.drawable.bg_chip)
+                chip.setTextColor(Color.parseColor("#94A3B8"))
+            }
+        }
+        // Tagline gaya aktif ditampilkan di baris petunjuk agar pengguna tahu bedanya.
+        showStyleHint()
+    }
+
+    /** Baris petunjuk default: menjelaskan bobot gaya trading yang sedang aktif. */
+    private fun showStyleHint() {
+        tvSearchHint.visibility = View.VISIBLE
+        tvSearchHint.text = "Gaya ${selectedStyle.label}: ${selectedStyle.tagline} · " +
+            "bobot Volume ${selectedStyle.wVolume} · Bandar ${selectedStyle.wBandar} · " +
+            "MA ${selectedStyle.wMa} · Fib ${selectedStyle.wFib}"
+    }
+
+    /**
+     * Ganti gaya trading: preset & timeframe default ikut berganti, lalu daftar
+     * dimuat ulang. Cache repo memisahkan gaya, jadi hasil antar gaya tidak tertukar.
+     */
+    private fun onStyleSelected(style: TradingStyle) {
+        if (style == selectedStyle) return
+        selectedStyle = style
+        exitSearchMode()
+        selectedPreset = ScreenerPreset.forStyle(style).first()
+        // Tab Screener hanya berjalan di candle harian; jaring pengaman bila suatu
+        // saat default sebuah gaya diubah ke timeframe intraday.
+        selectedTimeframe = style.defaultTimeframe.let { if (it.isDaily) it else CandleTimeframe.BULAN6 }
+        updateStyleChipStyles()
+        buildPresetChips()
+        updateTimeframeChipStyles()
+        runScan(selectedPreset, forceRefresh = true)
+    }
+
+    // ============================================================
     // PRESET CHIPS
     // ============================================================
 
+    /** Chip preset dibangun ulang tiap gaya berganti: tiap gaya punya preset sendiri. */
     private fun buildPresetChips() {
         llPresets.removeAllViews()
         presetChips.clear()
 
-        for (preset in ScreenerPreset.entries) {
+        for (preset in ScreenerPreset.forStyle(selectedStyle)) {
             val chip = TextView(requireContext()).apply {
                 text = preset.label
                 textSize = 11f
@@ -152,9 +266,10 @@ class ScreenerFragment : Fragment() {
     /**
      * Membangun chip pemilih timeframe candle.
      *
-     * Fibonacci & struktur pasar sangat bergantung pada timeframe: M15 untuk scalping
-     * intraday, H1 untuk swing pendek, D1 untuk swing mingguan. Mengubah chip ini akan
-     * memuat ulang analisis dengan candle baru sesuai timeframe tersebut.
+     * HANYA candle HARIAN (1D) yang ditampilkan. Tab Screener sengaja dibaca dari
+     * kerangka harian supaya struktur pasar, Order Block, dan dua tarikan Fibonacci
+     * konsisten — bukan dari gerak intraday. Yang berubah antar chip hanyalah
+     * panjang riwayat: 3 bulan (~66 candle) atau 6 bulan (~128 candle).
      */
     private fun buildTimeframeChips() {
         llTimeframes.removeAllViews()
@@ -167,9 +282,9 @@ class ScreenerFragment : Fragment() {
             setPadding(0, 0, dp(8), 0)
         })
 
-        for (tf in CandleTimeframe.entries) {
+        for (tf in CandleTimeframe.entries.filter { it.isDaily }) {
             val chip = TextView(requireContext()).apply {
-                text = tf.label
+                text = "${tf.label} · ${tf.horizon}"
                 textSize = 11f
                 setPadding(dp(12), dp(5), dp(12), dp(5))
                 gravity = Gravity.CENTER
@@ -203,6 +318,9 @@ class ScreenerFragment : Fragment() {
         if (tf == selectedTimeframe) return
         selectedTimeframe = tf
         updateTimeframeChipStyles()
+        // Mengganti timeframe juga membatalkan mode pencarian supaya daftar
+        // kembali sinkron dengan chip preset yang aktif.
+        exitSearchMode()
         runScan(selectedPreset, forceRefresh = true)
     }
 
@@ -213,13 +331,15 @@ class ScreenerFragment : Fragment() {
     private fun runScan(preset: ScreenerPreset, forceRefresh: Boolean = false) {
         if (isLoading) return
 
+        exitSearchMode()
         selectedPreset = preset
         updateChipStyles()
 
         isLoading = true
         pbLoading.visibility = View.VISIBLE
-        tvEmptyMsg.text = "Menyaring & memberi skor (${preset.label})...\n" +
-            "Menganalisis struktur & SMC pada TF ${selectedTimeframe.label}."
+        tvEmptyMsg.text = "Menyaring & memberi skor (${preset.label}) · gaya ${selectedStyle.label}...\n" +
+            "Mengunduh candle ${selectedTimeframe.label} (${selectedTimeframe.horizon}) untuk " +
+            "$TIME_SAFE_DEEP_COUNT kandidat teratas."
         layoutEmpty.visibility = View.VISIBLE
         rvScreener.visibility = View.GONE
 
@@ -229,7 +349,8 @@ class ScreenerFragment : Fragment() {
                 limit = 60,
                 deepAnalysisCount = TIME_SAFE_DEEP_COUNT,
                 forceRefresh = forceRefresh,
-                timeframe = selectedTimeframe
+                timeframe = selectedTimeframe,
+                style = selectedStyle
             ) ?: emptyList()
 
             pbLoading.visibility = View.GONE
@@ -254,6 +375,131 @@ class ScreenerFragment : Fragment() {
         tvEmptyMsg.text = message
         layoutEmpty.visibility = View.VISIBLE
         rvScreener.visibility = View.GONE
+    }
+
+    // ============================================================
+    // PENCARIAN KODE / NAMA SAHAM
+    // ============================================================
+
+    /**
+     * Menyiapkan kolom pencarian.
+     *
+     * Pencarian bekerja DI SISI HP atas daftar 844 emiten IDX yang diunduh sekali
+     * (~268 KB, ~0,8 detik) lalu disimpan di memori. Jadi mengetik terasa instan
+     * dan tidak membebani jaringan. Debounce 300 ms mencegah pencarian dijalankan
+     * pada tiap huruf ketika pengguna mengetik cepat.
+     */
+    private fun setupSearch() {
+        etSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+
+            override fun afterTextChanged(s: Editable?) {
+                if (suppressSearchWatcher) return
+                val query = s?.toString()?.trim().orEmpty()
+                tvSearchClear.visibility = if (query.isEmpty()) View.GONE else View.VISIBLE
+
+                searchJob?.cancel()
+                if (query.isEmpty()) {
+                    // Kolom dikosongkan -> kembali ke daftar hasil screening preset.
+                    exitSearchMode()
+                    if (adapter.itemCount == 0) runScan(selectedPreset)
+                    return
+                }
+
+                // Kode saham IDX selalu 4 huruf kapital; jaga agar input tetap bersih.
+                searchJob = lifecycleScope.launch {
+                    delay(300)
+                    runSearch(query)
+                }
+            }
+        })
+
+        etSearch.setOnEditorActionListener { _, _, _ ->
+            val query = etSearch.text?.toString()?.trim().orEmpty()
+            if (query.isNotEmpty()) {
+                searchJob?.cancel()
+                searchJob = lifecycleScope.launch { runSearch(query) }
+            }
+            true
+        }
+
+        tvSearchClear.setOnClickListener {
+            clearSearchBox()
+            etSearch.clearFocus()
+        }
+    }
+
+    /** Mengosongkan kolom pencarian tanpa memicu watcher-nya. */
+    private fun clearSearchBox() {
+        suppressSearchWatcher = true
+        etSearch.setText("")
+        tvSearchClear.visibility = View.GONE
+        suppressSearchWatcher = false
+    }
+
+    /**
+     * Mencari emiten lalu LANGSUNG menilainya dengan bobot gaya trading aktif.
+     *
+     * Berbeda dari [runScan], pencarian sengaja melewati filter preset: tujuan di
+     * sini menganalisis emiten yang dipilih pengguna, bukan menyaring universe.
+     */
+    private fun runSearch(query: String) {
+        val repository = repo ?: return
+
+        inSearchMode = true
+        pbLoading.visibility = View.VISIBLE
+        tvSearchHint.visibility = View.VISIBLE
+        tvSearchHint.text = "Mencari \"$query\" & menilai dengan gaya ${selectedStyle.label} (TF ${selectedTimeframe.label})..."
+        // Keterangan ini penting: pencarian = 1 unduhan daftar emiten + maksimal 8
+        // analisis candle, jadi pengguna tahu kenapa perlu menunggu sejenak.
+        tvEmptyMsg.text = "Mencari \"$query\"...\n" +
+            "Menilai 8 kandidat teratas dengan candle ${selectedTimeframe.label} (${selectedTimeframe.horizon})."
+        layoutEmpty.visibility = View.VISIBLE
+        rvScreener.visibility = View.GONE
+
+        lifecycleScope.launch {
+            val ketemu = repository.searchStocks(query, limit = 30)
+            val hasil = if (ketemu.isEmpty()) emptyList() else {
+                repository.scoreStocks(
+                    ketemu,
+                    style = selectedStyle,
+                    timeframe = selectedTimeframe,
+                    deepAnalysis = true,
+                    deepLimit = 8
+                )
+            }
+
+            pbLoading.visibility = View.GONE
+            if (!isAdded) return@launch
+            // Hasil dari pencarian lama tidak boleh menimpa pencarian terbaru.
+            if (!inSearchMode) return@launch
+
+            if (hasil.isEmpty()) {
+                showEmpty(
+                    "Tidak ada saham yang cocok dengan \"$query\".\n" +
+                        "Coba kode lain (mis. BBCA) atau potongan nama perusahaan (mis. \"bank\")."
+                )
+                tvSearchHint.text = "Tidak ada hasil untuk \"$query\" · gaya ${selectedStyle.label}"
+            } else {
+                adapter.submitList(hasil)
+                rvScreener.visibility = View.VISIBLE
+                layoutEmpty.visibility = View.GONE
+                tvSearchHint.text = "Hasil pencarian \"$query\" · ${hasil.size} emiten · " +
+                    "dinilai dengan gaya ${selectedStyle.label} (TF ${selectedTimeframe.label}). " +
+                    "Kosongkan kolom untuk kembali ke hasil screening."
+            }
+        }
+    }
+
+    /** Menandai bahwa daftar yang tampil kembali berasal dari preset, bukan pencarian. */
+    private fun exitSearchMode() {
+        searchJob?.cancel()
+        // Kolom dikosongkan agar tidak ada sisa kata kunci saat daftar sudah kembali
+        // menampilkan hasil screening preset.
+        if (etSearch.text?.isNotEmpty() == true) clearSearchBox()
+        inSearchMode = false
+        showStyleHint()
     }
 
     /**
@@ -305,7 +551,8 @@ class ScreenerFragment : Fragment() {
 
         container.addView(TextView(ctx).apply {
             val depth = if (item.deepAnalyzed) "analisis candle penuh (SMC)" else "snapshot saja (komponen candle belum dihitung)"
-            text = "${stock.name.ifEmpty { stock.ticker }} · ${stock.sector.ifEmpty { "—" }} · $depth"
+            val company = stock.companyName.ifEmpty { stock.name }
+            text = "$company · ${stock.sector.ifEmpty { "—" }}\nGaya ${score.style.label} · TF ${score.timeframe.label} · $depth"
             textSize = 11f
             setTextColor(Color.parseColor("#64748B"))
             setPadding(0, dp(3), 0, dp(8))

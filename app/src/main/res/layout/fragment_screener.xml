@@ -5,6 +5,27 @@
     android:background="@color/bg_panel"
     android:orientation="vertical">
 
+    <!-- Baris gaya trading: pilihan paling atas karena menentukan BOBOT skor
+         (daytrade menekankan likuiditas & aliran dana, swing menekankan tren)
+         sekaligus menentukan preset penyaring apa saja yang tersedia. -->
+    <HorizontalScrollView
+        android:id="@+id/svScreenerStyles"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_card"
+        android:paddingHorizontal="8dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="4dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/llScreenerStyles"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
     <!-- Baris preset penyaringan -->
     <HorizontalScrollView
         android:id="@+id/svScreenerPresets"
@@ -22,17 +43,25 @@
             android:orientation="horizontal" />
     </HorizontalScrollView>
 
-    <!-- Baris pemilih timeframe: M15 (scalping) / H1 (swing pendek) / D1 (swing mingguan).
-         Fibonacci & struktur pasar dihitung ulang sesuai timeframe yang dipilih. -->
-    <LinearLayout
-        android:id="@+id/llScreenerTimeframes"
+    <!-- Baris pemilih timeframe: M15 (intraday) / 1BL / 3BL / 6BL (dalam bulan).
+         Fibonacci & struktur pasar dihitung ulang sesuai timeframe yang dipilih.
+         Dibuat bisa digeser karena 4 chip + keterangan horizon bisa melebihi lebar layar. -->
+    <HorizontalScrollView
+        android:id="@+id/svScreenerTimeframes"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/bg_panel"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
         android:paddingHorizontal="8dp"
-        android:paddingVertical="4dp" />
+        android:paddingVertical="4dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/llScreenerTimeframes"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
 
     <!-- Catatan keterbatasan data -->
     <TextView
@@ -44,6 +73,59 @@
         android:text="⚠️ Skor 0-100 dari Volume·Bandar·MACD·RSI·MA·Fibonacci·SMC·Struktur. Data IDX delay 10-15 mnt — untuk menyaring kandidat, bukan pemicu entry."
         android:textColor="@color/signal_yellow"
         android:textSize="10sp" />
+
+    <!-- Pencarian kode / nama saham: langsung menilai emiten yang dicari
+         (melewati filter preset), memakai bobot gaya trading yang aktif. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_card"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="6dp">
+
+        <EditText
+            android:id="@+id/etScreenerSearch"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@drawable/bg_chip"
+            android:hint="🔍 Cari kode / nama saham (mis. BBCA, bank)"
+            android:imeOptions="actionSearch"
+            android:inputType="textCapCharacters"
+            android:maxLines="1"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="7dp"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_muted"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvScreenerSearchClear"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_chip"
+            android:gravity="center"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="7dp"
+            android:text="✕"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Penanda mode pencarian + progres unduh universe (268 KB sekali saja) -->
+    <TextView
+        android:id="@+id/tvScreenerSearchHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="4dp"
+        android:textColor="@color/brand_accent"
+        android:textSize="10sp"
+        android:visibility="gone" />
 
     <!-- Progress -->
     <ProgressBar

@@ -154,8 +154,11 @@ class ScreenerAdapter(
                 }
             } ?: ""
             val depthTag = if (item.deepAnalyzed) " · 🧠 SMC ${score.timeframe.label}" else " · snapshot"
+            // Nama perusahaan ditampilkan karena pengguna bisa menemukan emiten lewat
+            // fitur pencarian ("Cari kode / nama saham") tanpa tahu kodenya lebih dulu.
+            val company = stock.companyName.ifEmpty { stock.name }
             val sektor = stock.sector.ifEmpty { "—" }
-            tvSector.text = "$sektor$fibText$depthTag · ${score.summary}"
+            tvSector.text = "$company · $sektor$fibText$depthTag · Gaya: ${score.style.label} · ${score.summary}"
 
             cardScreener.setOnClickListener { onItemClick(item) }
         }

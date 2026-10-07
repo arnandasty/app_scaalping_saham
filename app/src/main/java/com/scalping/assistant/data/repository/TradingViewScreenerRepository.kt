@@ -3,6 +3,7 @@ package com.scalping.assistant.data.repository
 import com.scalping.assistant.data.models.Candle
 import com.scalping.assistant.engine.ScreenerScore
 import com.scalping.assistant.engine.ScreenerScoringEngine
+import com.scalping.assistant.engine.TradingStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -45,7 +46,10 @@ import java.net.URL
  */
 data class ScreenerStock(
     val ticker: String,
+    /** Kode/nama pendek dari scanner, mis. "BBCA". */
     val name: String,
+    /** Nama perusahaan lengkap, mis. "PT Bank Central Asia Tbk" — dipakai untuk pencarian. */
+    val companyName: String,
     val close: Double,
     val changePercent: Double,
     val volume: Long,
@@ -95,14 +99,39 @@ data class ScoredScreenerStock(
     val ticker: String get() = stock.ticker
 }
 
-/** Preset penyaring awal (mempersempit universe sebelum diskor). */
-enum class ScreenerPreset(val label: String) {
-    AKTIF("Semua Aktif"),
-    EARLY_MOMENTUM("🚀 Early Momentum"),
-    VOLUME_SPIKE("🔥 Volume Spike"),
-    TOP_GAINERS("📈 Top Gainers"),
-    TREN_NAIK("✅ Tren Naik"),
-    OVERSOLD("💎 Oversold")
+/**
+ * Preset penyaring awal (mempersempit universe sebelum diskor).
+ *
+ * Dipisah per gaya trading supaya kandidat yang disaring sejak awal memang cocok
+ * dengan gaya yang dipilih, bukan satu daftar generik untuk semua gaya.
+ */
+enum class ScreenerPreset(val label: String, val style: TradingStyle) {
+
+    // ---------- GAYA DAYTRADE ----------
+    /** Saham paling likuid — syarat utama daytrade: mudah masuk & keluar. */
+    DAY_LIKUID("💧 Likuid", TradingStyle.DAYTRADE),
+    /** Momentum awal: naik wajar tapi volume melonjak. */
+    DAY_MOMENTUM("🚀 Momentum", TradingStyle.DAYTRADE),
+    /** Pembalikan: merah tapi volume masuk, kandidat rebound intraday. */
+    DAY_REVERSAL("🔄 Reversal", TradingStyle.DAYTRADE),
+    /** Seluruh emiten likuid tanpa filter tambahan. */
+    DAY_SEMUA("Semua Aktif", TradingStyle.DAYTRADE),
+
+    // ---------- GAYA SWING ----------
+    /** Tren naik sehat untuk ditahan 3-10 hari. */
+    SWING_TREN("✅ Tren Naik", TradingStyle.SWING),
+    /** Pullback di tengah tren naik — beli saat diskon. */
+    SWING_PULLBACK("🎯 Pullback", TradingStyle.SWING),
+    /** Proxy bandarmology: MoneyFlow tinggi = sedang diakumulasi. */
+    SWING_AKUMULASI("🧠 Akumulasi", TradingStyle.SWING),
+    /** Seluruh emiten tanpa filter tambahan. */
+    SWING_SEMUA("Semua Aktif", TradingStyle.SWING);
+
+    companion object {
+        /** Preset untuk satu gaya trading, urut sesuai deklarasi. */
+        fun forStyle(style: TradingStyle): List<ScreenerPreset> =
+            entries.filter { it.style == style }
+    }
 }
 
 class TradingViewScreenerRepository(
@@ -112,11 +141,15 @@ class TradingViewScreenerRepository(
     private val cache = mutableMapOf<String, Pair<Long, List<ScoredScreenerStock>>>()
     private val cacheDurationMs = 5 * 60 * 1000L
 
+    /** Cache seluruh universe untuk fitur pencarian (terpisah dari cache hasil scan). */
+    private var universeCache: Pair<Long, List<ScreenerStock>>? = null
+    private val universeCacheMs = 10 * 60 * 1000L
+
     /** Universe IDX/IHSG. Terverifikasi: 886 instrumen, 844 di antaranya `stock`. */
     private val market = "indonesia"
 
     private val columns = listOf(
-        "name", "close", "change", "volume", "relative_volume_10d_calc",
+        "name", "description", "close", "change", "volume", "relative_volume_10d_calc",
         "RSI", "ATR", "Recommend.All", "sector",
         "Supertrend.Direction",
         "EMA9", "EMA21", "EMA20", "EMA50", "EMA200",
@@ -139,10 +172,13 @@ class TradingViewScreenerRepository(
         limit: Int = 60,
         deepAnalysisCount: Int = 12,
         forceRefresh: Boolean = false,
-        timeframe: CandleTimeframe = CandleTimeframe.M15
+        timeframe: CandleTimeframe = preset.style.defaultTimeframe,
+        style: TradingStyle = preset.style
     ): List<ScoredScreenerStock> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        val cacheKey = "${preset.name}|${timeframe.cacheKey}"
+        // Gaya masuk ke kunci cache: bobot penilaian daytrade berbeda dari swing,
+        // jadi hasilnya tidak boleh saling menimpa.
+        val cacheKey = "${preset.name}|${timeframe.cacheKey}|${style.name}"
         val cached = cache[cacheKey]
         if (!forceRefresh && cached != null && now - cached.first < cacheDurationMs) {
             return@withContext cached.second
@@ -158,7 +194,7 @@ class TradingViewScreenerRepository(
                     .map {
                         ScoredScreenerStock(
                             it,
-                            ScreenerScoringEngine.score(it, emptyList(), it.moneyFlow, timeframe)
+                            ScreenerScoringEngine.score(it, emptyList(), it.moneyFlow, timeframe, style)
                         )
                     }
                     .sortedByDescending { it.score.total }
@@ -167,7 +203,7 @@ class TradingViewScreenerRepository(
                 val deep = tahap1.take(deepAnalysisCount)
                 val sisa = tahap1.drop(deepAnalysisCount)
 
-                val diperkaya = enrichWithCandles(deep, timeframe)
+                val diperkaya = enrichWithCandles(deep, timeframe, style)
                 (diperkaya + sisa).sortedByDescending { it.score.total }
             }
         } catch (e: Exception) {
@@ -178,7 +214,103 @@ class TradingViewScreenerRepository(
         hasil
     }
 
-    fun clearCache() = cache.clear()
+    fun clearCache() {
+        cache.clear()
+        universeCache = null
+    }
+
+    // ============================================================
+    // PENCARIAN EMITEN (CARI KODE SAHAM)
+    // ============================================================
+
+    /**
+     * Mengunduh SELURUH universe IDX sekali lalu menyimpannya di memori.
+     *
+     * Terukur: 844 emiten dengan 22 kolom = ~268 KB dan ~763 ms. Karena itu
+     * pencarian bisa dilakukan di HP tanpa request jaringan tiap ketikan,
+     * sehingga hasilnya muncul instan.
+     */
+    private suspend fun ensureUniverse(forceRefresh: Boolean): List<ScreenerStock> {
+        val cached = universeCache
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && cached != null && now - cached.first < universeCacheMs) {
+            return cached.second
+        }
+        val data = fetchUniverse()
+        if (data.isNotEmpty()) universeCache = Pair(now, data)
+        return data
+    }
+
+    /**
+     * Mencari emiten dari kode ATAU nama perusahaan.
+     *
+     * Contoh yang cocok: "bbca", "BCA", "bank central", "telkom".
+     * Kode yang sama persis selalu diletakkan paling atas.
+     */
+    suspend fun searchStocks(
+        query: String,
+        limit: Int = 30,
+        forceRefresh: Boolean = false
+    ): List<ScreenerStock> = withContext(Dispatchers.IO) {
+        val q = query.trim().uppercase()
+        if (q.isEmpty()) return@withContext emptyList()
+
+        val universe = try {
+            ensureUniverse(forceRefresh)
+        } catch (e: Exception) {
+            emptyList()
+        }
+        if (universe.isEmpty()) return@withContext emptyList()
+
+        universe.asSequence()
+            .filter { st ->
+                st.ticker.contains(q) || st.companyName.uppercase().contains(q)
+            }
+            // Kode yang persis sama didahulukan, lalu kode yang berawalan sama,
+            // baru sisanya (biasanya cocok dari nama perusahaan).
+            .sortedWith(
+                compareByDescending<ScreenerStock> { it.ticker == q }
+                    .thenByDescending { it.ticker.startsWith(q) }
+                    .thenBy { it.ticker }
+            )
+            .take(limit)
+            .toList()
+    }
+
+    /**
+     * Mencari emiten lalu LANGSUNG memberi skor, supaya hasil pencarian bisa
+     * ditampilkan dengan format kartu yang sama seperti hasil screening.
+     *
+     * Berbeda dari [scan], di sini threshold preset sengaja dilewati — tujuannya
+     * menganalisis emiten yang sudah dipilih pengguna, bukan menyaring.
+     *
+     * HANYA [deepLimit] kandidat teratas (menurut skor snapshot) yang dianalisis
+     * dengan candle nyata. Alasannya penting untuk kecepatan: analisis candle =
+     * 1 request jaringan PER EMITEN, jadi menganalisis 30 hasil sekaligus membuat
+     * pencarian terasa lama. Emiten sisanya tetap tampil dengan tanda "snapshot".
+     */
+    suspend fun scoreStocks(
+        stocks: List<ScreenerStock>,
+        style: TradingStyle,
+        timeframe: CandleTimeframe = style.defaultTimeframe,
+        deepAnalysis: Boolean = true,
+        deepLimit: Int = 8
+    ): List<ScoredScreenerStock> = withContext(Dispatchers.IO) {
+        val dasar = stocks.map {
+            ScoredScreenerStock(
+                it,
+                ScreenerScoringEngine.score(it, emptyList(), it.moneyFlow, timeframe, style)
+            )
+        }
+        if (!deepAnalysis) return@withContext dasar
+
+        // Urutkan dulu dari skor snapshot, baru ambil yang teratas untuk analisis
+        // candle — supaya yang dianalisis memang kandidat paling menjanjikan.
+        val urut = dasar.sortedByDescending { it.score.total }
+        val deep = urut.take(deepLimit)
+        val sisa = urut.drop(deepLimit)
+        (enrichWithCandles(deep, timeframe, style) + sisa).sortedByDescending { it.score.total }
+    }
 
     // ============================================================
     // TAHAP 2: PERKAYA DENGAN CANDLE NYATA
@@ -186,7 +318,8 @@ class TradingViewScreenerRepository(
 
     private suspend fun enrichWithCandles(
         items: List<ScoredScreenerStock>,
-        timeframe: CandleTimeframe
+        timeframe: CandleTimeframe,
+        style: TradingStyle
     ): List<ScoredScreenerStock> {
         val repo = yahooRepo ?: return items
         return coroutineScope {
@@ -203,7 +336,8 @@ class TradingViewScreenerRepository(
                                     item.stock,
                                     candles,
                                     item.stock.moneyFlow,
-                                    timeframe
+                                    timeframe,
+                                    style
                                 ),
                                 deepAnalyzed = true
                             )
@@ -220,6 +354,23 @@ class TradingViewScreenerRepository(
     // FILTER PER PRESET
     // ============================================================
 
+    /**
+     * Seluruh universe IDX yang dipakai untuk pencarian kode/nama saham.
+     * Terukur: 844 emiten, ~268 KB, ~763 ms.
+     */
+    private suspend fun fetchUniverse(): List<ScreenerStock> {
+        val body = JSONObject().apply {
+            put("columns", JSONArray(columns))
+            put("range", JSONArray(listOf(0, 900)))
+            put("filter", JSONArray(listOf(filter("type", "equal", "stock"))))
+        }
+        return parse(postJson(body.toString()))
+    }
+
+    // ============================================================
+    // FILTER PER PRESET
+    // ============================================================
+
     private fun filtersFor(preset: ScreenerPreset): List<JSONObject> {
         val list = mutableListOf<JSONObject>()
 
@@ -227,41 +378,57 @@ class TradingViewScreenerRepository(
         list += filter("type", "equal", "stock")
 
         when (preset) {
-            ScreenerPreset.AKTIF -> {
+            // ---------- GAYA DAYTRADE ----------
+            // Daytrade butuh likuiditas: kalau sahamnya tipis, posisi sulit keluar.
+            ScreenerPreset.DAY_LIKUID -> {
+                list += filter("volume", "greater", 5_000_000)
+                list += filter("change", "in_range", JSONArray(listOf(-3.0, 6.0)))
+            }
+
+            // Momentum awal dengan volume melonjak. Batas atas RVOL 50x membuang
+            // saham baru listing (terverifikasi ada 122x di IDX:ENAK).
+            ScreenerPreset.DAY_MOMENTUM -> {
+                list += filter("change", "in_range", JSONArray(listOf(1.0, 7.0)))
+                list += filter("relative_volume_10d_calc", "in_range", JSONArray(listOf(2.0, 50.0)))
+                list += filter("volume", "greater", 3_000_000)
+            }
+
+            // Sedang merah tapi volume masuk — kandidat pantulan intraday.
+            ScreenerPreset.DAY_REVERSAL -> {
+                list += filter("change", "less", -1.0)
+                list += filter("relative_volume_10d_calc", "greater", 1.5)
+                list += filter("volume", "greater", 2_000_000)
+            }
+
+            ScreenerPreset.DAY_SEMUA -> {
                 list += filter("volume", "greater", 1_000_000)
             }
 
-            // Selaras strategi "Early Momentum (Akan Naik)": naik awal +0.5%..+5%
-            // disertai lonjakan volume, tapi bukan saham baru listing.
-            ScreenerPreset.EARLY_MOMENTUM -> {
-                list += filter("change", "greater", 0.5)
-                list += filter("change", "less", 5.0)
-                list += filter("relative_volume_10d_calc", "greater", 2.0)
-                list += filter("relative_volume_10d_calc", "less", 50.0)
-                list += filter("volume", "greater", 1_000_000)
-            }
-
-            // Batas atas 50x membuang saham baru listing yang rasionya tidak wajar
-            // (terverifikasi ada nilai 122x di IDX:ENAK).
-            ScreenerPreset.VOLUME_SPIKE -> {
-                list += filter("relative_volume_10d_calc", "in_range", JSONArray(listOf(3.0, 50.0)))
-                list += filter("volume", "greater", 1_000_000)
-            }
-
-            ScreenerPreset.TOP_GAINERS -> {
-                list += filter("change", "greater", 3.0)
+            // ---------- GAYA SWING (3-10 hari) ----------
+            // Tren naik sehat: rating teknikal positif tapi RSI belum jenuh,
+            // supaya masih ada ruang naik selama 3-10 hari ke depan.
+            ScreenerPreset.SWING_TREN -> {
+                list += filter("Recommend.All", "greater", 0.2)
+                list += filter("RSI", "in_range", JSONArray(listOf(45.0, 70.0)))
                 list += filter("volume", "greater", 500_000)
             }
 
-            ScreenerPreset.TREN_NAIK -> {
-                list += filter("Recommend.All", "greater", 0.3)
-                list += filter("RSI", "greater", 45.0)
-                list += filter("RSI", "less", 75.0)
+            // Pullback: tren masih positif tapi harga sedang dikoreksi,
+            // jadi entry lebih murah dibanding mengejar di puncak.
+            ScreenerPreset.SWING_PULLBACK -> {
+                list += filter("RSI", "in_range", JSONArray(listOf(35.0, 50.0)))
+                list += filter("Recommend.All", "greater", 0.0)
                 list += filter("volume", "greater", 500_000)
             }
 
-            ScreenerPreset.OVERSOLD -> {
-                list += filter("RSI", "less", 35.0)
+            // Proxy bandarmology: MoneyFlow tinggi = dana besar sedang masuk.
+            ScreenerPreset.SWING_AKUMULASI -> {
+                list += filter("MoneyFlow", "greater", 60.0)
+                list += filter("RSI", "in_range", JSONArray(listOf(40.0, 65.0)))
+                list += filter("volume", "greater", 500_000)
+            }
+
+            ScreenerPreset.SWING_SEMUA -> {
                 list += filter("volume", "greater", 500_000)
             }
         }
@@ -283,7 +450,14 @@ class TradingViewScreenerRepository(
             // Urutan awal dari server hanya untuk memilih sampel; urutan akhir dihitung dari skor.
             put("sort", JSONObject().put("sortBy", "relative_volume_10d_calc").put("sortOrder", "desc"))
         }
+        return parse(postJson(body.toString()))
+    }
 
+    /**
+     * POST ke scanner TradingView dan kembalikan teks respons.
+     * Mengembalikan string kosong bila gagal, supaya pemanggil bisa menanganinya seragam.
+     */
+    private fun postJson(body: String): String {
         val conn = (URL("https://scanner.tradingview.com/$market/scan").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 8000
@@ -295,19 +469,21 @@ class TradingViewScreenerRepository(
         }
 
         return try {
-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             if (conn.responseCode != 200) {
-                emptyList()
+                ""
             } else {
-                val text = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
-                parse(text)
+                BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
             }
+        } catch (e: Exception) {
+            ""
         } finally {
             conn.disconnect()
         }
     }
 
     private fun parse(jsonText: String): List<ScreenerStock> {
+        if (jsonText.isBlank()) return emptyList()
         val root = JSONObject(jsonText)
         val data = root.optJSONArray("data") ?: return emptyList()
 
@@ -330,26 +506,27 @@ class TradingViewScreenerRepository(
             out += ScreenerStock(
                 ticker = ticker,
                 name = text(0),
-                close = num(1),
-                changePercent = num(2),
-                volume = num(3).toLong(),
-                relativeVolume = num(4),
-                rsi = num(5),
-                atr = num(6),
-                recommendAll = num(7),
-                sector = text(8),
-                supertrendDir = num(9),
-                ema9 = num(10),
-                ema21 = num(11),
-                ema20 = num(12),
-                ema50 = num(13),
-                ema200 = num(14),
-                macdMacd = num(15),
-                macdSignal = num(16),
-                moneyFlow = num(17),
-                high = num(18),
-                low = num(19),
-                vwap = num(20)
+                companyName = text(1),
+                close = num(2),
+                changePercent = num(3),
+                volume = num(4).toLong(),
+                relativeVolume = num(5),
+                rsi = num(6),
+                atr = num(7),
+                recommendAll = num(8),
+                sector = text(9),
+                supertrendDir = num(10),
+                ema9 = num(11),
+                ema21 = num(12),
+                ema20 = num(13),
+                ema50 = num(14),
+                ema200 = num(15),
+                macdMacd = num(16),
+                macdSignal = num(17),
+                moneyFlow = num(18),
+                high = num(19),
+                low = num(20),
+                vwap = num(21)
             )
         }
         return out

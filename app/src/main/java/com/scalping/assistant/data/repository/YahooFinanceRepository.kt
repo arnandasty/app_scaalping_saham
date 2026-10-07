@@ -1,6 +1,7 @@
 package com.scalping.assistant.data.repository
 
 import com.scalping.assistant.data.models.Candle
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -8,6 +9,7 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 
 data class DailyTechnicalSummary(
     val lastClose: Double,
@@ -30,24 +32,47 @@ data class DailyTechnicalSummary(
  * [interval] dan [range] mengikuti parameter API chart Yahoo Finance.
  * [analysisWindow] adalah jumlah candle yang dipakai sebagai jendela analisis
  * (diset mendekati jumlah candle yang benar-benar tersedia agar tidak sia-sia).
+ *
+ * CATATAN PENTING soal jumlah candle (terukur pada emiten IDX):
+ * IDX hanya buka ~20-21 hari/bulan, jadi 1 bulan ≈ 21 candle harian.
+ * Deteksi swing butuh 3 candle di kiri + 3 di kanan, sehingga 6 candle
+ * pertama & terakhir tidak bisa jadi titik swing. Akibatnya rentang 1-2 bulan
+ * (23-43 candle) hanya menyisakan 2-3 swing dan setup Fibonacci-nya tipis
+ * (sering OVERSHOOT). Minimal ~60 candle (≈3 bulan) agar struktur & dua
+ * tarikan Fibonacci bisa diandalkan.
  */
 enum class CandleTimeframe(
     val label: String,
     val interval: String,
     val range: String,
-    val analysisWindow: Int
+    val analysisWindow: Int,
+    /** Perkiraan jangka waktu yang tercakup, untuk keterangan di UI. */
+    val horizon: String
 ) {
-    /** 15 menit x 5 hari (~111 candle). Paling cocok untuk scalping intraday. */
-    M15("M15", "15m", "5d", 120),
+    /** 15 menit x 5 hari. Scalping intraday. */
+    INTRADAY("15M", "15m", "5d", 120, "~5 hari"),
 
-    /** 1 jam x 1 bulan (~150 candle). Swing pendek 2-5 hari. */
-    H1("H1", "60m", "1mo", 150),
+    /** 1 jam x 1 bulan. Swing pendek dalam hari. */
+    BULAN1("1H", "60m", "1mo", 150, "~1 bulan"),
 
-    /** 1 hari x 6 bulan (~127 candle). Swing mingguan. */
-    D1("D1", "1d", "6mo", 130);
+    /** 1 hari x 3 bulan. Candle HARIAN — default gaya swing 3-10 hari. */
+    BULAN3("1D", "1d", "3mo", 70, "~3 bulan"),
+
+    /** 1 hari x 6 bulan. Konteks tren besar. */
+    BULAN6("1D", "1d", "6mo", 130, "~6 bulan");
 
     /** Kunci cache agar tiap timeframe punya cache sendiri. */
     val cacheKey: String get() = "$interval|$range"
+
+    /**
+     * true bila satu candle = satu HARI.
+     *
+     * Tab Screener hanya memakai candle harian supaya analisis emiten konsisten:
+     * struktur pasar, Order Block, dan Fibonacci dibaca dari kerangka harian (1D),
+     * bukan dari gerak intraday. Timeframe intraday tetap dipakai oleh pipeline
+     * Scalping (tab Manual/Movers) yang memang butuh data per menit.
+     */
+    val isDaily: Boolean get() = interval == "1d"
 }
 
 class YahooFinanceRepository {
@@ -56,15 +81,26 @@ class YahooFinanceRepository {
     private val candleCache = mutableMapOf<String, Pair<Long, List<Candle>>>()
     private val CACHE_DURATION_MS = 60_000L // 1 menit
 
+    /**
+     * Request yang SEDANG berjalan, supaya pemanggil kedua tidak mengirim request
+     * yang sama. Terukur: 12 emiten paralel ≈ 100 ms, jadi tabrakan request jarang,
+     * TAPI saat tab Screener baru dibuka, satu emiten bisa diminta oleh pipeline
+     * Scalping dan Screener sekaligus. Dengan peta ini keduanya berbagi 1 request.
+     *
+     * Memakai ConcurrentHashMap + CompletableDeferred agar pemanggil kedua benar-benar
+     * MENUNGGU (suspend), bukan sibuk menunggu (busy wait) atau mengirim request ulang.
+     */
+    private val candleInFlight = ConcurrentHashMap<String, CompletableDeferred<List<Candle>>>()
+
     private val dailyCache = mutableMapOf<String, Pair<Long, DailyTechnicalSummary>>()
     private val DAILY_CACHE_DURATION_MS = 300_000L // 5 menit
 
     /**
      * Candle 15m (perilaku lama, dipertahankan agar pemanggil lama tidak berubah).
-     * Setara dengan [fetchCandles] memakai [CandleTimeframe.M15].
+     * Setara dengan [fetchCandles] memakai [CandleTimeframe.INTRADAY].
      */
     suspend fun fetchIntradayCandles(ticker: String): List<Candle> =
-        fetchCandles(ticker, CandleTimeframe.M15)
+        fetchCandles(ticker, CandleTimeframe.INTRADAY)
 
     /**
      * Candle untuk ticker pada timeframe tertentu.
@@ -74,7 +110,7 @@ class YahooFinanceRepository {
      */
     suspend fun fetchCandles(
         ticker: String,
-        timeframe: CandleTimeframe = CandleTimeframe.M15
+        timeframe: CandleTimeframe = CandleTimeframe.BULAN3
     ): List<Candle> = withContext(Dispatchers.IO) {
         val cleanTicker = ticker.trim().uppercase()
         val key = "$cleanTicker|${timeframe.cacheKey}"
@@ -85,7 +121,38 @@ class YahooFinanceRepository {
             return@withContext cached.second
         }
 
-        try {
+        // Kalau ada request yang sedang berjalan untuk ticker+timeframe ini, tunggu
+        // hasilnya saja (suspend) — jangan kirim request kedua yang isinya sama.
+        val slot = CompletableDeferred<List<Candle>>()
+        val sudahAda = candleInFlight.putIfAbsent(key, slot)
+        if (sudahAda != null) {
+            return@withContext sudahAda.await()
+        }
+
+        val result: List<Candle> = try {
+            val data = fetchCandlesFromNetwork(cleanTicker, timeframe, cached?.second)
+            if (data.isNotEmpty()) candleCache[key] = Pair(System.currentTimeMillis(), data)
+            data
+        } catch (e: Exception) {
+            // Pengecualian tetap diteruskan ke penunggu, tetapi slot WAJIB diselesaikan
+            // supaya penunggu tidak menggantung selamanya.
+            candleInFlight.remove(key)
+            slot.completeExceptionally(e)
+            throw e
+        }
+
+        candleInFlight.remove(key)
+        slot.complete(result)
+        result
+    }
+
+    /** Unduhan jaringan sebenarnya; dipakai [fetchCandles] dan ditunggu bersama-sama. */
+    private fun fetchCandlesFromNetwork(
+        cleanTicker: String,
+        timeframe: CandleTimeframe,
+        fallback: List<Candle>?
+    ): List<Candle> {
+        return try {
             val symbol = if (cleanTicker.endsWith(".JK")) cleanTicker else "$cleanTicker.JK"
             val urlString = "https://query1.finance.yahoo.com/v8/finance/chart/$symbol" +
                 "?interval=${timeframe.interval}&range=${timeframe.range}"
@@ -98,19 +165,13 @@ class YahooFinanceRepository {
             }
 
             if (conn.responseCode != 200) {
-                return@withContext cached?.second ?: emptyList()
+                return fallback ?: emptyList()
             }
 
             val response = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
-            val candles = parseCandles(response)
-
-            if (candles.isNotEmpty()) {
-                candleCache[key] = Pair(now, candles)
-            }
-
-            candles
+            parseCandles(response)
         } catch (e: Exception) {
-            cached?.second ?: emptyList()
+            fallback ?: emptyList()
         }
     }
 

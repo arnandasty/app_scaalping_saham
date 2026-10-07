@@ -134,12 +134,13 @@ Aplikasi ini ditenagai oleh tiga mesin utama yang berjalan secara asinkron:
 ### C. Komponen Baru
 | Berkas | Peran |
 | :--- | :--- |
-| `TradingViewScreenerRepository.kt` | Akses scanner IDX, 6 preset filter, skoring hybrid dua tahap, cache 5 menit |
-| `ScreenerScoringEngine.kt` | Skor 0-100 dari 8 komponen indikator & struktur (bukan orderbook) |
+| `TradingStyle.kt` | **Gaya trading** (Daytrade / Swing 3-10 hari) beserta bobot tiap komponen |
+| `TradingViewScreenerRepository.kt` | Akses scanner IDX, 8 preset (4 per gaya), skoring hybrid dua tahap, cache 5 mnt, cache universe untuk pencarian |
+| `ScreenerScoringEngine.kt` | Skor 0-100 dari 8 komponen indikator & struktur (bukan orderbook); bobot mengikuti gaya trading |
 | `SmartMoneyAnalyzer.kt` | Deteksi swing, struktur HH/HL/LH/LL, BOS, CHoCH, Order Block, Fibonacci dua tarikan |
-| `ScreenerFragment.kt` | Tab Screener, chip preset, dialog rincian skor per komponen |
-| `ScreenerAdapter.kt` | Kartu hasil: badge skor, chip tren/OB, zona beli/jual Fibonacci |
-| `fragment_screener.xml` | Layout tab + peringatan delay yang selalu terlihat |
+| `ScreenerFragment.kt` | Tab Screener: chip **Gaya** + chip preset + chip TF, kolom **pencarian saham**, dialog rincian skor |
+| `ScreenerAdapter.kt` | Kartu hasil: badge skor, nama perusahaan, chip tren/OB, zona beli/jual Fibonacci, label gaya |
+| `fragment_screener.xml` | Layout tab + peringatan delay yang selalu terlihat + kolom pencarian |
 | `item_screener_stock.xml` | Layout kartu kandidat |
 | `bg_score_green/yellow/red.xml` | Warna badge skor |
 | `bg_dialog_sheet.xml` | Latar dialog rincian skor |
@@ -151,25 +152,43 @@ Skor di tab Screener **sengaja berbeda** dari `ScoringEngine.kt` milik aplikasi:
 * `ScoringEngine.kt` → berbasis **orderbook** (bid/offer, delta volume, tembok) + sesi bursa + bandar detector.
 * `ScreenerScoringEngine.kt` → murni berbasis **indikator & struktur pasar**.
 
-| # | Komponen | Bobot | Dasar Penilaian |
-| :-: | :--- | :-: | :--- |
-| 1 | Volume / RVOL | 20 | RVOL ≥5× (20) s.d. <1× (0) |
-| 2 | Bandarmology | 15 | `MoneyFlow` 0-100 + rating teknikal sebagai konfirmasi |
-| 3 | MACD | 10 | Histogram (`MACD.macd` - `MACD.signal`) di atas nol & di atas signal |
-| 4 | RSI 14 | 10 | 60-77 paling ideal; >78 dianggap terlalu panas |
-| 5 | Moving Average | 15 | Susunan EMA9>EMA21 + harga di atas EMA20/50/200 |
-| 6 | Fibonacci | 10 | Konfirmasi beli 0,5-0,618 pada tarikan premier |
-| 7 | Smart Money (OB/BOS/CHoCH) | 15 | BOS bullish (7), CHoCH bullish (5), harga di Order Block (3) |
-| 8 | Struktur Pasar | 5 | Bullish HH/HL (5), Ranging (2), Bearish LH/LL (0) |
-| | **Total** | **100** | |
+#### D.1 Dua Gaya Trading — Bobot Berbeda
 
-**Grade:** ≥80 SANGAT KUAT 🔥 · ≥65 KUAT ✅ · ≥50 SEDANG 🟡 · ≥35 LEMAH ⚠️ · <35 SANGAT LEMAH ❌
+Tab Screener punya baris chip **Gaya** di paling atas. Yang berubah hanya **bobot**-nya; cara menilai tiap komponen (rasio 0..1 lalu dikali bobot) sama, sehingga angka 0-100 tetap bisa dibandingkan antar emiten.
 
-**Alur hybrid dua tahap:**
+| # | Komponen | Daytrade | Swing 3-10 hari | Dasar Penilaian |
+| :-: | :--- | :-: | :-: | :--- |
+| 1 | Volume / RVOL | **20** | 15 | RVOL ≥5× (penuh) s.d. <1× (nol) |
+| 2 | Bandarmology | **18** | 15 | `MoneyFlow` 0-100 + rating teknikal sebagai konfirmasi |
+| 3 | MACD | 12 | 10 | Histogram (`MACD.macd` - `MACD.signal`) di atas nol & di atas signal |
+| 4 | RSI 14 | 10 | 10 | **Cara menilai berbeda antar gaya** — lihat di bawah |
+| 5 | Moving Average | 8 | **18** | Susunan EMA9>EMA21 + harga di atas EMA20/50/200 |
+| 6 | Fibonacci | 12 | **15** | Konfirmasi beli 0,5-0,618 pada tarikan premier |
+| 7 | Smart Money (OB/BOS/CHoCH) | **15** | 12 | BOS bullish, CHoCH bullish, harga di dalam Order Block |
+| 8 | Struktur Pasar | 5 | 5 | Bullish HH/HL (penuh), Ranging (40%), Bearish LH/LL (nol) |
+| | **Total** | **100** | **100** | |
+
+**Alasan perbedaan bobot:**
+* **Daytrade** menekankan **Volume & Bandarmology** (likuiditas menentukan bisa/tidaknya keluar posisi) dan mengecilkan **Moving Average** (tren jangka panjang hampir tidak relevan untuk posisi singkat).
+* **Swing 3-10 hari** menekankan **Moving Average & Fibonacci** (yang menopang harga selama beberapa hari) dan mengecilkan Volume (lonjakan sehari tidak terlalu berarti).
+
+**Timeframe:** kedua gaya memakai **candle harian (1D)** — lihat bagian E2.
+
+**RSI dinilai berbeda (bukan hanya bobotnya):**
+* **Daytrade** — RSI sangat rendah (oversold) dianggap **peluang pantulan cepat** (rasio 0,8), karena posisi hanya sebentar.
+* **Swing** — RSI sangat rendah berarti **tren turun masih berlangsung** (rasio 0,2), karena harga masih perlu naik selama 3-10 hari.
+
+#### D.2 Alur Hybrid Dua Tahap
+
 1. **Tahap 1 (cepat)** — 1 request snapshot untuk seluruh universe → semua kandidat diskor dari indikator.
-2. **Tahap 2 (akurat)** — 20 kandidat teratas diambil candle 15m nyata-nya, lalu komponen SMC/Order Block/Fibonacci dihitung ulang secara paralel.
+2. **Tahap 2 (akurat)** — 12 kandidat teratas diambil candle nyata sesuai TF terpilih, lalu komponen SMC/Order Block/Fibonacci dihitung ulang secara paralel.
 3. Hasil akhir **selalu diurutkan dari skor tertinggi**.
-4. Kartu tanpa analisis candle diberi tanda `snapshot` (skor maksimal 70) vs `🧠 SMC` (maksimal 100), agar perbandingan tetap jujur.
+4. Kartu tanpa analisis candle diberi tanda `snapshot` (komponen candle bernilai 0) vs `🧠 SMC <TF>`, agar perbandingan tetap jujur.
+5. Cache dipisah per **preset + timeframe + gaya**, jadi hasil daytrade tidak pernah menimpa hasil swing.
+
+**Batasan request (penting untuk kecepatan):**
+* Tahap 2 hanya menganalisis **12 kandidat teratas** (`TIME_SAFE_DEEP_COUNT`), karena 1 emiten = 1 request candle ke Yahoo Finance dan Yahoo TIDAK bisa menggabungkan banyak emiten dalam satu request.
+* Fitur pencarian memakai `deepLimit = 8` dengan alasan yang sama.
 
 ### E. Fibonacci DUA TARIKAN (sesuai ketentuan pemakaian)
 
@@ -196,27 +215,105 @@ Titik masuk (entry) dan titik jual (exit) ditampilkan langsung di kartu & dialog
 
 **Lookback swing adaptif:** Diturunkan otomatis bila swing terlalu sedikit, karena saham bertick kasar (harga puluhan rupiah, satuan 1 rupiah) punya banyak high/low kembar. Bila tidak ada swing low sebelum swing high, titik low premier memakai low candle terendah pada rentang tersebut — sehingga saham seperti GOTO (~Rp 30) tetap bisa dianalisis. Status tetap dilaporkan jujur `NONE` hanya bila kenaikannya memang tidak signifikan.
 
-### F. Preset Penyaringan
+### E2. Timeframe: HANYA Candle Harian (1D)
+
+Tab Screener **sengaja dibatasi ke candle harian** supaya struktur pasar, Order Block, dan dua tarikan Fibonacci dibaca dari satu kerangka yang konsisten. Yang bisa dipilih pengguna hanyalah **panjang riwayat**:
+
+| Chip | Candle | Range | Candle | Horizon |
+| :--- | :--- | :--- | :-: | :--- |
+| **1D** (default) | 1 hari | 3mo | ~66 | ~3 bulan |
+| **1D** | 1 hari | 6mo | ~128 | ~6 bulan |
+
+Kedua gaya trading (Daytrade & Swing) memakai default yang sama, yaitu **1D / 3 bulan**. Pembeda antar gaya adalah **bobot skor** dan **preset penyaring**, bukan timeframe.
+
+> Pipeline Scalping di tab Manual/Movers **tetap memakai candle 15 menit** karena memang butuh data per menit untuk membaca orderbook. Yang dibatasi ke harian hanya tab Screener.
+
+**⚠️ Temuan terukur — kenapa minimal 3 bulan:**
+
+IDX hanya buka ~20-21 hari/bulan, jadi 1 bulan ≈ 21 candle harian. Deteksi swing butuh 3 candle kiri + 3 kanan, sehingga 6 candle awal & akhir tidak bisa jadi titik swing.
+
+| Jangka | Candle D1 | Hasil uji (ANTM / BBRI / TLKM) |
+| :--- | :-: | :--- |
+| 1 bulan | 23 | OVERSHOOT ❌ / OVERSHOOT ❌ / WAITING 🟡 |
+| 2 bulan | 43 | OVERSHOOT ❌ / OVERSHOOT ❌ / OVERSHOOT ❌ |
+| **3 bulan** | **66** | **VALID ✅ / VALID ✅** / OVERSHOOT |
+| 6 bulan | 128 | WAITING / WAITING / OVERSHOOT |
+
+**Kesimpulan:** minimal **~60 candle (≈3 bulan)** agar pola premier + tarikan sekunder bisa diandalkan. Karena itu **1D / 3 bulan** dijadikan default.
+
+### E3. Catatan Kecepatan (terukur, 7 Okt 2026)
+
+Sempat dilaporkan tab Screener terasa lama memuat. Setelah diukur langsung ke TradingView & Yahoo Finance:
+
+| Yang diukur | Waktu |
+| :--- | :-: |
+| Scanner TradingView, 1 request (60 baris) | 396 ms |
+| Scanner TradingView, universe pencarian (844 baris, 293 KB) | 1.287 ms |
+| 12 emiten candle harian paralel | 197 ms |
+| 5x berturut-turut (simulasi ganti preset) | stabil ~100 ms, semua HTTP 200 |
+| 30 emiten candle sekaligus | 156 ms |
+
+**Temuan:** jaringan cepat dan Yahoo **tidak** membatasi permintaan berulang (tidak ada HTTP 429/999). Jadi lambatnya berasal dari kondisi jaringan pengguna, **bukan** dari jumlah candle.
+
+**Perbaikan yang tetap dipasang** (mengurangi jumlah request, bukan mengubah data):
+1. **Deduplikasi request (single-flight)** — request candle yang identik dan sedang berjalan dipakai bersama lewat `ConcurrentHashMap<String, CompletableDeferred>` di `YahooFinanceRepository`. Sebelumnya satu emiten bisa diminta 2x saat tab Screener baru dibuka (pipeline Scalping minta 15m, Screener minta 1D).
+2. **Batas analisis candle hasil pencarian** — `scoreStocks(deepLimit = 8)`: hanya 8 kandidat teratas yang dianalisis dengan candle nyata; sisanya tetap tampil bertanda `snapshot`. Alasan: 1 emiten = 1 request, jadi 30 hasil sekaligus = 30 request.
+
+> Catatan: memotong jumlah candle **tidak** dipakai sebagai solusi, karena candle harian 3 bulan hanya ~4,5 KB / 66 candle — sangat ringan. Yang berpengaruh adalah jumlah *request*, bukan besar datanya.
+
+### F. Preset Penyaringan (Berbeda per Gaya)
+
+Preset dibangun ulang saat chip **Gaya** diganti, jadi kandidat yang disaring sejak awal memang cocok dengan gaya yang dipilih.
+
+**Gaya Daytrade:**
+
 | Preset | Filter |
 | :--- | :--- |
-| 🚀 Early Momentum | naik +0.5%–+5%, RVOL 2–50×, vol >1 Jt (selaras strategi "Akan Naik") |
-| 🔥 Volume Spike | RVOL 3–50×, vol >1 Jt |
-| 📈 Top Gainers | naik >3%, vol >500 Rb |
-| ✅ Tren Naik | Recommend ≥0.3, RSI 45-75, vol >500 Rb |
-| 💎 Oversold | RSI <35, vol >500 Rb |
+| 💧 Likuid | vol >5 Jt, perubahan -3% s.d. +6% |
+| 🚀 Momentum | naik +1% s.d. +7%, RVOL 2-50×, vol >3 Jt |
+| 🔄 Reversal | turun <-1%, RVOL >1,5×, vol >2 Jt |
 | Semua Aktif | vol >1 Jt |
 
+**Gaya Swing 3-10 hari:**
+
+| Preset | Filter |
+| :--- | :--- |
+| ✅ Tren Naik | `Recommend.All` >0,2, RSI 45-70, vol >500 Rb |
+| 🎯 Pullback | RSI 35-50, `Recommend.All` >0, vol >500 Rb |
+| 🧠 Akumulasi | `MoneyFlow` >60, RSI 40-65, vol >500 Rb |
+| Semua Aktif | vol >500 Rb |
+
 * **Batas atas RVOL 50×** dipasang untuk membuang saham baru listing — verifikasi menemukan `IDX:ENAK` bernilai 122× (tidak wajar).
+* Setiap filter di atas **terverifikasi HTTP 200** pada scanner IDX (jumlah hasil: Likuid 100, Momentum 20, Reversal 13, Tren 100, Pullback 17, Akumulasi 100).
+
+### F2. Pencarian Kode / Nama Saham
+
+Kolom **🔍 Cari kode / nama saham** di bawah baris peringatan delay.
+
+* **Cara kerja:** hasil pencarian bekerja **di dalam HP**, bukan dengan request filter ke server. Seluruh universe IDX (844 emiten, 22 kolom) diunduh **sekali** lalu disimpan di cache memori 10 menit.
+* **Terukur:** 1 request `range [0,900]` = **~268 KB, ~763 ms** (HTTP 200). Karena itu mengetik terasa instan.
+* **Cocok untuk:** kode (`BBCA`), potongan kode (`BCA`), dan **nama perusahaan** (`bank central`, `telkom`) — kolom `description` berisi nama lengkap, mis. `PT GoTo Gojek Tokopedia Tbk`.
+* **Kenapa bukan filter server:** filter `left="name"` bersifat **case-sensitive** dan hanya menerima kode persis — `"BBCA"` → 1 baris, `"bbca"` → 0 baris, `"IDX:BBCA"` → 0, `"BBCA.JK"` → 0. Filter itu juga tidak bisa mencocokkan nama perusahaan.
+* **Debounce 300 ms** agar tidak dicari pada tiap huruf saat mengetik cepat; tombol **✕** mengosongkan kolom.
+* Hasil pencarian ditampilkan memakai **format kartu yang sama** seperti hasil screening (dan langsung dinilai dengan gaya + TF harian yang aktif), karena `scoreStocks()` melewati filter preset — tujuannya menganalisis emiten pilihan pengguna, bukan menyaring.
+* **Dibatasi `deepLimit = 8`**: hanya 8 hasil teratas yang dianalisis dengan candle nyata, karena 1 emiten = 1 request jaringan. Sisanya tetap tampil bertanda `snapshot`.
+* Baris keterangan di atas daftar selalu memberi tahu mode yang aktif: "Hasil pencarian …" atau "Gaya … · bobot Volume …".
 
 ### G. Alur Integrasi
 1. Tab **Screener** berada di indeks 3 (setelah Top Picks) → **Portfolio bergeser ke indeks 4**.
-2. Preset **Early Momentum** dimuat otomatis saat tab dibuka.
-3. Menekan kartu → muncul **dialog rincian skor** (poin & alasan tiap komponen + level Fibonacci dua tarikan). Tombol "Buka di Stockbit" memindahkan ke tab Manual + membuka emiten di orderbook + meminta data Bandar Detector.
-4. Setelah dibuka, emiten melewati pipeline lama (OrderFlow + Teknikal + ScoringEngine) sehingga sinyal entry tetap berbasis data real-time.
+2. Saat tab dibuka: gaya **Swing 3-10 hari** aktif, preset pertama (✅ Tren Naik) dimuat otomatis dengan candle harian **1D / ~3 bulan**.
+3. Mengganti chip **Gaya** → preset ikut berganti, daftar dimuat ulang. Chip **TF** hanya berisi pilihan harian (3 bulan / 6 bulan) dan mengganti panjang riwayat analisis.
+4. Menekan kartu → muncul **dialog rincian skor** (poin & alasan tiap komponen + level Fibonacci dua tarikan + gaya & TF yang dipakai). Tombol "Buka di Stockbit" memindahkan ke tab Manual + membuka emiten di orderbook + meminta data Bandar Detector.
+5. Setelah dibuka, emiten melewati pipeline lama (OrderFlow + Teknikal + ScoringEngine) sehingga sinyal entry tetap berbasis data real-time.
 
 ### H. Status
 * ✅ APK debug berhasil di-build (`app-debug.apk`) — kompilasi Kotlin & resource tervalidasi.
-* ✅ Logika SMC & Fibonacci dua tarikan divalidasi dengan candle 15m nyata (skrip port Node di folder scratch artifact) pada 6 emiten: BBCA, BBRI, ANTM, TLKM, GOTO, SMRA.
+* ✅ Logika SMC & Fibonacci dua tarikan divalidasi dengan candle nyata (skrip port Node di folder scratch artifact) pada 6 emiten: BBCA, BBRI, ANTM, TLKM, GOTO, SMRA.
+* ✅ Pemilih timeframe divalidasi lintas timeframe pada ANTM, BBRI, TLKM → jadi dasar keputusan memakai **candle harian 1D minimal 3 bulan**.
+* ✅ **Dua gaya trading** (Daytrade & Swing 3-10 hari) dengan bobot berbeda + 8 preset per gaya — seluruh filter terverifikasi HTTP 200 pada scanner IDX.
+* ✅ **Pencarian kode/nama saham** berbasis cache universe (844 emiten, ~293 KB, ~1,3 dtk) — terverifikasi `name` bersifat case-sensitive sehingga pencarian sengaja dilakukan di sisi HP.
+* ✅ **Kecepatan diukur** ke TradingView & Yahoo: 12 candle paralel ~197 ms, 30 candle ~156 ms, 5x berturut-turut stabil ~100 ms. Yahoo **tidak** membatasi permintaan (tidak ada HTTP 429/999), jadi keluhan lambat sebelumnya berasal dari jaringan pengguna.
+* ✅ **Deduplikasi request candle** (single-flight) + batas analisis pencarian (8) mengurangi jumlah request, bukan mengubah data.
 * ⏳ **Belum diuji di device/live market.** Perlu pengujian saat bursa buka.
 
 ---
