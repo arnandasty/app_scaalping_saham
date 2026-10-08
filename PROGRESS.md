@@ -436,6 +436,110 @@ Kolom **🔍 Cari kode / nama saham** di bawah baris peringatan delay.
 - ✅ **Mode pengembangan:** selama `LoginConfig.PROJECT_ID` kosong, login **dilewati** — aktivasi fitur cukup mengisi 3 nilai konfigurasi.
 - ⏳ Belum diuji dengan Firebase sungguhan (perlu project Firebase milik developer untuk uji end-to-end).
 
+### F. Langkah Setting Firebase (Panduan Praktis)
+
+Ikuti urutan berikut **satu kali** untuk mengaktifkan fitur login. Tidak perlu membangun panel admin — semua pengelolaan lewat **Firebase Console**.
+
+#### F.1 — Buat Project Firebase
+1. Buka [console.firebase.google.com](https://console.firebase.google.com) → login akun Google.
+2. **Add project** → beri nama (mis. `scalping-assistant`).
+3. Google Analytics boleh **dimatikan** (aplikasi ini tidak memakainya) → **Create project**.
+
+#### F.2 — Daftarkan Aplikasi Android
+1. Di halaman **Project overview**, klik ikon **Android** pada **Add app**.
+2. **Android package name** = `com.scalping.assistant` — **harus persis**, kalau tidak login akan gagal.
+3. Nickname & SHA-1 boleh dikosongkan → **Register app**.
+4. Muncul tawaran mengunduh `google-services.json`. **👉 JANGAN dipakai.** Aplikasi ini menginisialisasi Firebase secara programatik, jadi file itu tidak diperlukan. Abaikan/tutup langkah itu.
+
+#### F.3 — Buat Database Firestore
+1. Menu **Build → Firestore Database → Create database**.
+2. Pilih lokasi server terdekat (mis. **asia-southeast2 / Jakarta**).
+3. Mulai dalam **Production mode** (jangan test mode).
+
+#### F.4 — Salin 3 Nilai Konfigurasi
+1. Klik **⚙️ Project settings → General → Your apps → SDK setup and configuration**.
+2. Catat **tiga** nilai berikut:
+
+   | Nilai di Firebase | Contoh |
+   | :--- | :--- |
+   | **Project ID** | `scalping-assistant-a1b2c` |
+   | **App ID** | `1:1234567890:android:1a2b3c4d5e6f7g8h` |
+   | **Web API Key** | `AIzaSy................` |
+
+3. Buka [`LoginConfig.kt`](app/src/main/java/com/scalping/assistant/data/auth/LoginConfig.kt) dan isi ketiganya:
+
+   ```kotlin
+   const val PROJECT_ID = "scalping-assistant-a1b2c"
+   const val APPLICATION_ID = "1:1234567890:android:1a2b3c4d5e6f7g8h"
+   const val API_KEY = "AIzaSy................"
+   ```
+
+4. Build ulang: `.\gradlew assembleDebug`. Sejak titik ini login **aktif**. (Sebelum diisi, login otomatis **dilewati** = mode pengembangan.)
+
+#### F.5 — Terbitkan Security Rules
+Firestore → tab **Rules** → ganti seluruh isi → **Publish**:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /redeem_codes/{code} {
+      allow read: if true;      // verifikasi kode saat login
+      allow write: if false;    // hanya Console/generator yang menulis
+    }
+    match /activations/{deviceId} {
+      allow read, write: if false;
+    }
+  }
+}
+```
+
+> **Catatan penting:** Rules di atas membuat aplikasi **tidak bisa** menulis `deviceId` ke dokumen kode, sehingga pengikatan "1 kode = 1 perangkat" **tidak dipaksakan server** (harus diisi manual dari Console).
+> Bila ingin otomatis, ubah aturan agar aplikasi boleh menulis **hanya** field administratif:
+> `allow write: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deviceId','activatedAt','activationCount']);` pada `redeem_codes`, dan `allow write: if true;` pada `activations`.
+
+#### F.6 — Terbitkan Kode Redeem
+1. Buka terminal di `tools/redeem`:
+
+   ```bash
+   node generate-code.js --days 30 --note "Budi - paket 1 bulan"
+   ```
+
+   Perintah mencetak **kode** (mis. `SCLPZYB8X4DS`) + **JSON dokumen siap tempel**.
+   Opsi lain: `--until 2026-12-31`, `--count 5`, `--prefix GO`, `--json`.
+
+2. Di Firestore Console: **Data → Start collection** → ID koleksi `redeem_codes`.
+3. **Add document** → **Document ID** = kode tadi (mis. `SCLPZYB8X4DS`).
+4. Isi field:
+
+   | Field | Tipe | Nilai |
+   | :--- | :--- | :--- |
+   | `active` | boolean | `true` |
+   | `expiresAt` | number | epoch millis, mis. `1767225600000` |
+   | `note` | string | mis. `Budi - paket 1 bulan` |
+   | `createdAt` | number | epoch millis saat dibuat |
+
+5. **Save**. Ulangi untuk kode berikutnya (satu dokumen = satu kode).
+
+#### F.7 — Uji Coba
+1. Pasang APK di HP → layar login muncul.
+2. Masukkan kode → harus berhasil masuk.
+3. Uji kadaluarsa: ubah `expiresAt` ke nilai masa lalu → buka app → harus **otomatis logout**.
+4. Uji cabut kode: ubah `active` → `false` → buka app → **otomatis logout**.
+5. Uji 1 kode = 1 perangkat: pasang di HP kedua dengan kode yang sama → harus ditolak (bila `deviceId` sudah terisi).
+
+#### F.8 — Pengelolaan Harian (dari Console)
+
+| Ingin… | Lakukan |
+| :--- | :--- |
+| **Cabut kode** (user langsung terlogout) | Ubah `active` → `false` |
+| **Perpanjang** masa berlaku | Ubah `expiresAt` ke epoch millis baru |
+| **Pindah perangkat** | Hapus field `deviceId` pada dokumen kode |
+| **Lihat perangkat aktif** | Periksa field `deviceId` pada dokumen kode |
+| **Pelanggan baru** | Terbitkan dokumen kode baru (F.6) |
+
+> Nilai epoch millis dari tanggal bisa dihitung di browser: `new Date("2026-12-31T23:59:59").getTime()`.
+
 ---
 
 *Dokumen ini diperbarui secara berkala dan mencakup seluruh perkembangan arsitektur dan strategi scalping.*
