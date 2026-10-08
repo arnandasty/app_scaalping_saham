@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Latar layar login: gradien gelap premium + sorot biru lembut di atas. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="#0B1120"
+                android:centerColor="#0E1424"
+                android:endColor="#060A14"
+                android:type="linear" />
+        </shape>
+    </item>
+
+    <item android:gravity="top">
+        <shape android:shape="oval">
+            <size
+                android:width="420dp"
+                android:height="420dp" />
+            <gradient
+                android:type="radial"
+                android:gradientRadius="220dp"
+                android:startColor="#330EA5E9"
+                android:endColor="#000EA5E9" />
+        </shape>
+    </item>
+</layer-list>

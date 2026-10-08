@@ -393,4 +393,49 @@ Kolom **🔍 Cari kode / nama saham** di bawah baris peringatan delay.
 
 ---
 
+## 9. Fitur Login Kode Redeem (Gerbang Akses Pengguna)
+
+**Latar belakang:** aplikasi perlu dibatasi hanya untuk pengguna yang berhak, dengan cara sesederhana mungkin bagi pembeli namun tetap terkontrol bagi developer. Solusinya: **login dengan kode redeem** yang diterbitkan developer, dengan **masa berlaku** yang bisa diatur dan **logout otomatis** saat kadaluarsa.
+
+### A. Keputusan Desain
+| Aspek | Keputusan |
+| :--- | :--- |
+| **Backend validasi** | Firebase **Cloud Firestore** (tidak bisa dimanipulasi dari HP). |
+| **Pengelolaan kode** | **Firebase Console** saja — **tanpa panel admin kustom**. Console sudah setara "editor tabel" dan gratis. |
+| **Terbit kode** | Alat CLI `tools/redeem/generate-code.js` (Node) → mencetak kode + JSON siap tempel. |
+| **1 pengguna = 1 kode** | Diikat ke **1 perangkat** (device ID anonim, hash `ANDROID_ID + model + salt`). |
+| **Anti manipulasi jam** | Patokan jam tertinggi disimpan; jam mundur > 2 menit → login ditolak. |
+| **Tanpa `google-services.json`** | Firebase diinisialisasi **programatik** dari `LoginConfig`, agar konfigurasi terkumpul di satu berkas. |
+
+### B. Komponen Baru
+| Berkas | Peran |
+| :--- | :--- |
+| [`data/auth/LoginConfig.kt`](app/src/main/java/com/scalping/assistant/data/auth/LoginConfig.kt) | Sumber tunggal `PROJECT_ID`, `APPLICATION_ID`, `API_KEY`, nama koleksi, prefix kode, `isConfigured`. |
+| [`data/auth/LoginModels.kt`](app/src/main/java/com/scalping/assistant/data/auth/LoginModels.kt) | `LoginFailReason`, `LoginResult`, `LoginSession`, dan util `LoginFormat` (normalisasi & format tanggal). |
+| [`data/auth/LoginRepository.kt`](app/src/main/java/com/scalping/assistant/data/auth/LoginRepository.kt) | Verifikasi ke Firestore, sesi lokal, device binding, deteksi jam mundur, keputusan offline. |
+| [`ui/LoginActivity.kt`](app/src/main/java/com/scalping/assistant/ui/LoginActivity.kt) | Layar login (kini **launcher**), animasi logo, auto-lanjut bila sesi masih sah. |
+| [`res/layout/activity_login.xml`](app/src/main/res/layout/activity_login.xml) + 4 drawable | Tampilan login premium (gradasi, kartu kaca, animasi). |
+| [`tools/redeem/`](tools/redeem/README.md) | Generator kode redeem + dokumentasi pemakaian. |
+| [`SETUP_FIREBASE_LOGIN.md`](SETUP_FIREBASE_LOGIN.md) | Panduan aktivasi lengkap untuk developer. |
+
+### C. Alur
+1. **`LoginActivity`** menjadi **launcher** aplikasi. Bila ada sesi valid → langsung ke `MainActivity`; bila tidak → tampilkan form.
+2. `LoginRepository.redeem()` membaca dokumen `redeem_codes/{KODE}`, memeriksa `active`, `expiresAt`, dan `deviceId`.
+3. Aktivasi pertama mengikat kode ke perangkat & mencatat di koleksi `activations` (bila Rules mengizinkan).
+4. Setiap `MainActivity.onCreate` memanggil `verifyStoredSession()`; kode kadaluarsa/dicabut → **otomatis logout** ke layar login.
+5. **Keluar akun manual:** tekan lama lencana sesi di layar utama.
+
+### D. Keamanan
+- `API_KEY` Firestore pada Android **bukan rahasia** — perlindungan bertumpu pada **Security Rules** (contoh lengkap di `SETUP_FIREBASE_LOGIN.md`).
+- `expiresAt` diterima sebagai **number** (epoch millis) maupun **timestamp** Firestore, agar tidak salah baca tipe field.
+- Deteksi jam mundur mencegah pengguna "memperpanjang" masa berlaku dengan memundurkan jam HP.
+
+### E. Status
+- ✅ **APK debug berhasil di-build** setelah fitur login ditambahkan (kompilasi Kotlin & resource tervalidasi).
+- ✅ Generator kode diuji: mencetak kode `SCLPZYB8X4DS` + JSON Firestore dengan benar.
+- ✅ **Mode pengembangan:** selama `LoginConfig.PROJECT_ID` kosong, login **dilewati** — aktivasi fitur cukup mengisi 3 nilai konfigurasi.
+- ⏳ Belum diuji dengan Firebase sungguhan (perlu project Firebase milik developer untuk uji end-to-end).
+
+---
+
 *Dokumen ini diperbarui secara berkala dan mencakup seluruh perkembangan arsitektur dan strategi scalping.*

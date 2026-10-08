@@ -2,6 +2,7 @@ package com.scalping.assistant
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -150,6 +151,10 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Gerbang login: layar utama hanya tampil bila sesi kode redeem masih sah.
+        if (!ensureLoginGate()) return
+
         setContentView(R.layout.activity_main)
 
         initViews()
@@ -167,6 +172,43 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(scrapingRunnable, 5000L)
     }
 
+    /**
+     * Memastikan pengguna berhak membuka aplikasi.
+     *
+     * Bila fitur login tidak aktif (Firebase belum dikonfigurasi) gerbang dilewati supaya
+     * pengembangan tetap lancar. Jika ada sesi, keabsahan diverifikasi ulang ke server di
+     * latar belakang; kode yang kadaluarsa/dicabut akan otomatis memaksa logout.
+     */
+    private fun ensureLoginGate(): Boolean {
+        val repo = com.scalping.assistant.data.auth.LoginRepository(applicationContext)
+        if (!repo.isLoginEnabled()) return true
+
+        if (repo.currentSession() == null) {
+            redirectToLogin()
+            return false
+        }
+
+        lifecycleScope.launch {
+            val result = try {
+                repo.verifyStoredSession()
+            } catch (e: Exception) {
+                null
+            }
+            if (result is com.scalping.assistant.data.auth.LoginResult.Failure) {
+                Toast.makeText(this@MainActivity, "Sesi berakhir: ${result.message}", Toast.LENGTH_LONG).show()
+                repo.logout()
+                redirectToLogin()
+            }
+        }
+        return true
+    }
+
+    /** Mengalihkan ke layar login dan menutup layar utama. */
+    private fun redirectToLogin() {
+        startActivity(Intent(this, com.scalping.assistant.ui.LoginActivity::class.java))
+        finish()
+    }
+
     private fun initViews() {
         webView = findViewById(R.id.webViewStockbit)
         webViewMovers = findViewById(R.id.webViewMovers)
@@ -181,6 +223,11 @@ class MainActivity : AppCompatActivity() {
         tvStatusLog = findViewById(R.id.tvStatusLog)
         tvStatusLog.setOnClickListener {
             showProbeLogDialog()
+        }
+        // Tekan lama lencana sesi untuk keluar akun (ganti kode redeem).
+        tvSessionBadge.setOnLongClickListener {
+            showLogoutDialog()
+            true
         }
         webViewContainer = findViewById(R.id.webViewContainer)
         dividerDragHandle = findViewById(R.id.dividerDragHandle)
@@ -1205,6 +1252,25 @@ class MainActivity : AppCompatActivity() {
         tvStatusLog.text = "⚠️ Tekanan Jual $ticker: $reason"
     }
 
+    /** Dialog keluar akun: menghapus sesi lokal lalu kembali ke layar login. */
+    private fun showLogoutDialog() {
+        val repo = com.scalping.assistant.data.auth.LoginRepository(applicationContext)
+        val session = repo.currentSession()
+        val info = if (session != null)
+            "Kode: ${session.code}\nBerlaku sampai: ${com.scalping.assistant.data.auth.LoginFormat.formatExpiry(session.expiresAtMillis)}"
+        else "Belum ada sesi aktif."
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Keluar Akun")
+            .setMessage("$info\n\nKeluar akan menghapus sesi di perangkat ini. Untuk masuk lagi, gunakan kode redeem Anda.")
+            .setPositiveButton("Keluar") { _, _ ->
+                repo.logout()
+                redirectToLogin()
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
     private fun showProbeLogDialog() {
         val items = synchronized(probeLogs) { probeLogs.reversed().toTypedArray() }
         val (tickers, snaps) = if (::orderBookRepo.isInitialized) orderBookRepo.getSnapshotCacheInfo() else Pair(0, 0)
@@ -1276,5 +1342,12 @@ class MainActivity : AppCompatActivity() {
         webView.destroy()
         webViewMovers.destroy()
         webViewStream.destroy()
+    }
+
+    companion object {
+        /** Membuka layar utama (dipakai [com.scalping.assistant.ui.LoginActivity] setelah login sah). */
+        fun start(ctx: Context) {
+            ctx.startActivity(Intent(ctx, MainActivity::class.java))
+        }
     }
 }

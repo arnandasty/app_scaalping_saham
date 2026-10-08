@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kolom input kode redeem: gelap dengan fokus biru. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#F21A2438" />
+            <corners android:radius="14dp" />
+            <stroke
+                android:width="2dp"
+                android:color="#0EA5E9" />
+        </shape>
+    </item>
+
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#F2141D30" />
+            <corners android:radius="14dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#334155" />
+        </shape>
+    </item>
+</selector>

@@ -4,7 +4,24 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 
 ---
 
-## [v2.6] - 2026-10-08 (Terkini)
+## [v2.7] - 2026-10-09 (Terkini)
+
+### 🔐 Fitur Login Kode Redeem + Masa Berlaku & Logout Otomatis
+- **Gerbang login:** Pengguna baru kini masuk memakai **kode redeem** yang diterbitkan developer. [`LoginActivity`](app/src/main/java/com/scalping/assistant/ui/LoginActivity.kt) menjadi **layar pembuka (launcher)**; [`MainActivity`](app/src/main/java/com/scalping/assistant/MainActivity.kt) hanya terbuka setelah sesi sah.
+- **Tanpa panel admin:** Pengelolaan kode cukup lewat **Firebase Console** (Firestore) — setara editor tabel, tanpa membangun web admin.
+- **Terbit kode praktis:** Alat CLI baru [`tools/redeem/generate-code.js`](tools/redeem/generate-code.js) mencetak kode (mis. `SCLP7K2M9QX4`) + JSON dokumen Firestore siap tempel. Opsi `--days`, `--until`, `--count`, `--note`, `--prefix`.
+- **Atur kadaluarsa:** Setiap kode punya `expiresAt`. Saat kadaluarsa (atau dicabut dengan `active=false`), aplikasi **otomatis logout** ke layar login.
+- **1 pengguna = 1 kode:** Kode diikat ke **1 perangkat** (device ID anonim `SHA-256(ANDROID_ID + model + salt)`), sehingga satu kode tidak bisa dipakai di HP lain. Bisa juga diperiksa/diatur manual dari Console.
+- **Anti curang jam:** Patokan jam tertinggi disimpan; bila jam HP dimundurkan > 2 menit, login ditolak — mencegah "perpanjang" masa berlaku.
+- **Mode offline:** Bila internet tidak ada, sesi terakhir tetap dipakai selama belum kadaluarsa; begitu server terjangkau, keputusan server yang berlaku.
+- **Konfigurasi terpusat:** Firebase diinisialisasi **programatik** dari [`LoginConfig.kt`](app/src/main/java/com/scalping/assistant/data/auth/LoginConfig.kt) — **tanpa `google-services.json`**. Selama `PROJECT_ID` kosong, login **dilewati** (mode pengembangan) agar build tetap lancar.
+- **Keluar akun:** Tekan lama lencana sesi di layar utama untuk membuka dialog **Keluar Akun**.
+- **Panduan developer:** [`SETUP_FIREBASE_LOGIN.md`](SETUP_FIREBASE_LOGIN.md) memuat langkah membuat project Firebase, mengisi konfigurasi, Security Rules, menerbitkan kode, dan arti tiap pesan kegagalan.
+- **Dependensi:** Firebase BOM 33.7.0 + Firestore, serta `kotlinx-coroutines-play-services`.
+
+---
+
+## [v2.6] - 2026-10-08
 
 ### 📐 Perbaikan Fibonacci Dua Tarikan — Anchor High Kini Mengikuti Harga Terbaru (Pivot ZigZag)
 - **Masalah:** kedua tarikan Fibonacci memakai acuan high lama. Contoh: harga hari ini naik ke **150**, tetapi tarikan tetap ditarik dari high sebelumnya di **136** — sehingga zona beli (tarikan 1) dan target jual (tarikan 2) tertinggal. Titik *low* sudah benar, hanya *high* yang salah baca.
