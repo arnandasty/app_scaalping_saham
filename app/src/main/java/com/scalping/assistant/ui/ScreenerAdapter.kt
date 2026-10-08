@@ -148,7 +148,10 @@ class ScreenerAdapter(
                 when (fib.state) {
                     FibSetupState.VALID -> " · 🎯 Beli ${formatNumber(fib.entryHigh)}-${formatNumber(fib.entryLow)}"
                     FibSetupState.WAITING -> " · ⏳ Tunggu koreksi 0,5"
-                    FibSetupState.IN_SELL -> " · 🎯 Jual ${formatNumber(fib.sellHigh)}-${formatNumber(fib.sellLow)}"
+                    FibSetupState.IN_SELL -> if (fib.secondaryLegProvisional)
+                        " · 🎯 Target ${formatNumber(fib.sellHigh)}-${formatNumber(fib.sellLow)} (proyeksi)"
+                    else
+                        " · 🎯 Jual ${formatNumber(fib.sellHigh)}-${formatNumber(fib.sellLow)}"
                     FibSetupState.OVERSHOOT -> " · ⚠️ Fib gugur (>0,618)"
                     FibSetupState.NONE -> ""
                 }

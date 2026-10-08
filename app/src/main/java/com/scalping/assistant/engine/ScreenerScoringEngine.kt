@@ -322,7 +322,10 @@ object ScreenerScoringEngine {
         val (ratio, note) = when (fib.state) {
             FibSetupState.VALID -> 1.0 to "Konfirmasi beli di zona 0,5-0,618 ($entry)"
             FibSetupState.WAITING -> 0.5 to "Pola premier ada, menunggu koreksi ke 0,5 ($entry)"
-            FibSetupState.IN_SELL -> 0.2 to "Harga sudah di zona jual $sell (terlambat untuk entry)"
+            FibSetupState.IN_SELL -> 0.2 to (if (fib.secondaryLegProvisional)
+                "Harga sudah mendekati proyeksi target $sell (pola sekunder belum terbentuk — zona ini proyeksi, bukan zona jual sekunder yang sah)"
+            else
+                "Harga sudah di zona jual $sell (terlambat untuk entry)")
             FibSetupState.OVERSHOOT -> 0.1 to "Koreksi menembus 0,618 — setup beli gugur"
             FibSetupState.NONE -> 0.0 to "Pola premier belum terbentuk"
         }

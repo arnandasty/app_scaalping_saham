@@ -134,6 +134,12 @@ data class FibLevels(
     val sellLow: Double = 0.0,
     /** Batas atas zona jual (0,618 leg sekunder). */
     val sellHigh: Double = 0.0,
+    /**
+     * true bila [secondaryLeg] masih berupa PROYEKSI: syarat pola sekunder (koreksi setelah
+     * high premier) BELUM terpenuhi, sehingga zona diukur dari dasar leg berjalan. Dipakai UI
+     * agar zona ini tidak disajikan seolah-olah zona jual sekunder yang sah.
+     */
+    val secondaryLegProvisional: Boolean = false,
     val rationale: String = ""
 )
 
@@ -522,12 +528,14 @@ object SmartMoneyAnalyzer {
 
         // --- 2 & 5: POLA SEKUNDER -> tarikan 2 (zona jual) ---
         // Low sekunder = titik koreksi setelah high premier. Bila koreksinya SUDAH terjadi,
-        // dipakai titik terendah sesudah high (perilaku lama). Bila high premier masih
-        // BERJALAN (mis. high hari ini, belum ada koreksi sesudahnya), zona jual diukur dari
-        // DASAR leg berjalan — pivot low terakhir SEBELUM high — supaya target profit ikut
-        // terangkat bersama high baru, bukan tertinggal di high lama.
+        // dipakai titik terendah sesudah high (SESUAI syarat pola sekunder).
+        // Bila high premier masih BERJALAN (mis. high hari ini, belum ada koreksi sesudahnya),
+        // syarat pola sekunder BELUM terpenuhi. Zona diukur dari DASAR leg berjalan sebagai
+        // PROYEKSI target, lalu ditandai [FibLevels.secondaryLegProvisional] supaya UI tidak
+        // menyajikannya seolah-olah zona jual sekunder yang sah.
         val afterHigh = window.drop(premierPair.second + 1)
         val hasCorrectionAfterHigh = zigzagLows.any { it.index > premierPair.second }
+        val secondaryProvisional = !hasCorrectionAfterHigh
         val sekunderLow: Double? = if (hasCorrectionAfterHigh) {
             afterHigh.minOfOrNull { it.low }?.takeIf { it > 0.0 }
         } else {
@@ -573,7 +581,11 @@ object SmartMoneyAnalyzer {
         val rationale = buildString {
             append(state.label)
             if (secondaryLeg != null) {
-                append(" · jual ${fmtPrice(secondaryLeg.zoneLow)}-${fmtPrice(secondaryLeg.zoneHigh)}")
+                if (secondaryProvisional) {
+                    append(" · proyeksi target ${fmtPrice(secondaryLeg.zoneLow)}-${fmtPrice(secondaryLeg.zoneHigh)} (pola sekunder belum terbentuk)")
+                } else {
+                    append(" · jual ${fmtPrice(secondaryLeg.zoneLow)}-${fmtPrice(secondaryLeg.zoneHigh)}")
+                }
             }
         }
 
@@ -597,6 +609,7 @@ object SmartMoneyAnalyzer {
             entryHigh = entryHigh,
             sellLow = secondaryLeg?.zoneLow ?: 0.0,
             sellHigh = secondaryLeg?.zoneHigh ?: 0.0,
+            secondaryLegProvisional = secondaryProvisional,
             rationale = rationale
         )
     }

@@ -618,9 +618,14 @@ class ScreenerFragment : Fragment() {
             container.addView(infoLine(ctx, "Jendela analisis: ${score.timeframe.analysisWindow} candle terakhir (${score.timeframe.interval} × ${score.timeframe.range})"))
 
             score.fibonacci?.secondaryLeg?.let { secondary ->
-                container.addView(sectionTitle(ctx, "Fibonacci — Tarikan 2 (Zona Jual)"))
+                val provisional = score.fibonacci.secondaryLegProvisional
+                container.addView(sectionTitle(ctx,
+                    if (provisional) "Fibonacci — Tarikan 2 (Proyeksi Target · pola sekunder belum terbentuk)"
+                    else "Fibonacci — Tarikan 2 (Zona Jual)"))
                 container.addView(infoLine(ctx, "Leg: high ${fmtPrice(secondary.startPrice)} → low ${fmtPrice(secondary.endPrice)}"))
-                container.addView(infoLine(ctx, "Zona jual 0,5-0,618 = ${fmtPrice(secondary.zoneLow)} – ${fmtPrice(secondary.zoneHigh)}"))
+                container.addView(infoLine(ctx,
+                    if (provisional) "Proyeksi target 0,5-0,618 = ${fmtPrice(secondary.zoneLow)} – ${fmtPrice(secondary.zoneHigh)}"
+                    else "Zona jual 0,5-0,618 = ${fmtPrice(secondary.zoneLow)} – ${fmtPrice(secondary.zoneHigh)}"))
             }
 
             container.addView(TextView(ctx).apply {

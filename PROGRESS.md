@@ -283,7 +283,17 @@ Sempat dilaporkan tab Screener terasa lama memuat. Setelah diukur langsung ke Tr
 
 **Ambang ZigZag** = `1,5 × rata-rata rentang candle (high−low)`, dibatasi **0,6%–3,0%**. Rentang candle dipakai (bukan gerak close-ke-close) supaya noise intrabar kecil tidak memecah satu ayunan menjadi banyak pivot palsu.
 
-**Zona jual (tarikan 2) saat high masih berjalan:** bila koreksi setelah high **belum** terjadi, zona jual diukur dari **dasar leg berjalan** (pivot low terakhir sebelum high) — sehingga target profit ikut terangkat bersama high baru, bukan hilang/tertinggal.
+**Zona jual (tarikan 2) saat high masih berjalan:** bila koreksi setelah high **belum** terjadi, zona jual diukur dari **dasar leg berjalan** (pivot low terakhir sebelum high) — sehingga target profit ikut terangkat bersama high baru, bukan hilang/tertinggal. Zona ini **ditandai eksplisit** `secondaryLegProvisional`, jadi di kartu/dialog muncul sebagai **"proyeksi target"** dengan keterangan "pola sekunder belum terbentuk", bukan sebagai zona jual sekunder yang sah.
+
+**Audit kelima syarat Fibonacci:**
+
+| # | Syarat | Status |
+| :-: | :--- | :--- |
+| 1 | Pola premier (kenaikan signifikan setelah swing low) | ✅ Ditegakkan (`findPremierLeg`: low sebelum high + lonjakan ≥ ambang adaptif) |
+| 2 | Pola sekunder (koreksi setelah pola premier) | ✅ Ditegakkan; bila belum terbentuk, zona jual diberi label **proyeksi** |
+| 3 | Tarikan 1 = LOW PREMIER → HIGH PREMIER (zona beli) | ✅ |
+| 4 | Tunggu harga tembus < 0,5 dan tidak lebih rendah dari 0,618 | ✅ (`dippedBelow05` & `heldAbove0618`) |
+| 5 | Tarikan 2 = HIGH SEKUNDER → LOW SEKUNDER (zona jual) | ✅ |
 
 **Uji data nyata (1D/3mo, jendela 100 candle) — zona beli kini jatuh di sekitar harga terkini:**
 

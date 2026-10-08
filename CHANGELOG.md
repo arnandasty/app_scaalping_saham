@@ -10,7 +10,7 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 - **Masalah:** kedua tarikan Fibonacci memakai acuan high lama. Contoh: harga hari ini naik ke **150**, tetapi tarikan tetap ditarik dari high sebelumnya di **136** — sehingga zona beli (tarikan 1) dan target jual (tarikan 2) tertinggal. Titik *low* sudah benar, hanya *high* yang salah baca.
 - **Akar masalah:** deteksi swing mensyaratkan candle puncak lebih tinggi dari candle di kanannya, sehingga puncak **terbaru** (high hari ini) belum terdeteksi selama harga belum turun.
 - **Solusi:** anchor high diambil dari **pivot ZigZag** (`findZigZagPivots`) yang selalu menyertakan ekstrem **yang masih berjalan** hingga candle terakhir. Titik *low* tetap memakai deteksi swing karena sudah terbukti akurat.
-- **Zona jual saat high masih berjalan:** bila koreksi setelah high belum terjadi, zona jual diukur dari **dasar leg berjalan** (pivot low terakhir sebelum high), jadi target profit ikut terangkat bersama high baru.
+- **Zona jual saat high masih berjalan:** bila koreksi setelah high belum terjadi, zona jual diukur dari **dasar leg berjalan** (pivot low terakhir sebelum high), jadi target profit ikut terangkat bersama high baru — dan **ditandai eksplisit sebagai "proyeksi target"** (`secondaryLegProvisional`), karena syarat pola sekunder belum terpenuhi. Hanya zona jual yang berasal dari koreksi nyata yang disebut "zona jual sekunder".
 - **Ambang ZigZag:** `1,5 × rata-rata rentang candle`, dibatasi 0,6%–3,0%.
 - **Verifikasi:** uji data nyata IDX — zona beli kini jatuh di sekitar harga terkini (TLKM 2609–2630 → **2253–2270**; SMRA 304–312 → **237–238**; GOTO `NONE` → **28–29**).
 
