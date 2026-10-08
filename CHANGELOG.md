@@ -11,8 +11,9 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 - **Akar masalah:** deteksi swing mensyaratkan candle puncak lebih tinggi dari candle di kanannya, sehingga puncak **terbaru** (high hari ini) belum terdeteksi selama harga belum turun.
 - **Solusi:** anchor high diambil dari **pivot ZigZag** (`findZigZagPivots`) yang selalu menyertakan ekstrem **yang masih berjalan** hingga candle terakhir. Titik *low* tetap memakai deteksi swing karena sudah terbukti akurat.
 - **Zona jual saat high masih berjalan:** bila koreksi setelah high belum terjadi, zona jual diukur dari **dasar leg berjalan** (pivot low terakhir sebelum high), jadi target profit ikut terangkat bersama high baru — dan **ditandai eksplisit sebagai "proyeksi target"** (`secondaryLegProvisional`), karena syarat pola sekunder belum terpenuhi. Hanya zona jual yang berasal dari koreksi nyata yang disebut "zona jual sekunder".
+- **Anchor low (zona beli) = DUA TITIK TERAKHIR:** low premier kini diambil dari **higher low terdekat** sebelum high terbaru (bukan titik low terendah sepanjang tren). Saat harga cetak higher high baru dan koreksi belum terjadi, zona beli menempel di harga terkini (mis. 129 → 150 memberi zona beli **137–139,5**), bukan lagi jauh di bawah (118–124). Cadangan ke high lebih tua tetap ada bila leg terbaru kurang signifikan.
 - **Ambang ZigZag:** `1,5 × rata-rata rentang candle`, dibatasi 0,6%–3,0%.
-- **Verifikasi:** uji data nyata IDX — zona beli kini jatuh di sekitar harga terkini (TLKM 2609–2630 → **2253–2270**; SMRA 304–312 → **237–238**; GOTO `NONE` → **28–29**).
+- **Verifikasi:** uji data nyata IDX — zona beli kini menempel di harga terkini (TLKM close 2310 → beli **2266–2280**; SMRA close 236 → **238–239**; GOTO close 30 → **30–31**; BBCA close 6050 → **6061–6088**).
 
 ---
 

@@ -266,20 +266,24 @@ Sempat dilaporkan tab Screener terasa lama memuat. Setelah diukur langsung ke Tr
 
 > Catatan: memotong jumlah candle **tidak** dipakai sebagai solusi, karena candle harian 3 bulan hanya ~4,5 KB / 66 candle — sangat ringan. Yang berpengaruh adalah jumlah *request*, bukan besar datanya.
 
-### E4. Perbaikan Anchor Fibonacci: Pivot ZigZag (high terbaru ikut terbaca)
+### E4. Perbaikan Anchor Fibonacci: Pivot ZigZag + Dua Titik Terakhir
 
 **Masalah yang dilaporkan:** kedua tarikan masih mengambil acuan high lama. Contoh: harga hari ini naik ke **150**, tetapi tarikan tetap ditarik ke high sebelumnya di **136** — sehingga zona beli (tarikan 1) dan target jual (tarikan 2) sama-sama tertinggal. Titik *low* sudah benar; hanya titik *high* yang salah baca.
 
 **Akar masalah:** `findSwings` mensyaratkan sebuah candle puncak **lebih tinggi dari candle di kanannya**. Akibatnya puncak **terbaru** (high hari ini) belum pernah dianggap swing selama harga belum turun. Fibonacci pun mengunci high lama yang sudah "terkonfirmasi".
 
-**Perbaikan:** anchor high kini diambil dari **pivot ZigZag** (`findZigZagPivots`) — titik balik yang sudah terkonfirmasi berbalik ≥ ambang, **ditambah** satu titik ekstrem yang masih berjalan di ujung kanan (mis. high hari ini). Titik *low* sengaja **tetap** memakai deteksi swing karena sudah terbukti akurat.
+**Perbaikan (2 tahap):**
+
+1. **Anchor high** diambil dari **pivot ZigZag** (`findZigZagPivots`) — titik balik terkonfirmasi berbalik ≥ ambang, **ditambah** ekstrem yang masih berjalan di ujung kanan (mis. high hari ini), sehingga high terbaru langsung terbaca.
+2. **Anchor low (zona beli) memakai DUA TITIK TERAKHIR:** pivot low/higher low **terdekat sebelum high terbaru** (`lowestPriorLow`), bukan titik low terendah sepanjang tren. Jadi saat harga mencetak higher high baru dan koreksi belum terjadi, Fibonacci ditarik dari higher low terdekat ke high terbaru — zona beli menempel di harga terkini. Bila leg ini kurang signifikan, barulah ditelusuri high yang lebih tua sebagai cadangan.
 
 | Aspek | Sebelum | Sesudah |
 | :--- | :--- | :--- |
 | Sumber high premier | Swing high (butuh candle kanan lebih rendah) | Pivot ZigZag + ekstrem berjalan |
 | High hari ini (150) | Tidak terbaca, tertinggal di 136 | Langsung terbaca |
+| Anchor low (zona beli) | Titik low **terendah** sepanjang tren (mis. 99) | **Higher low terdekat** sebelum high (mis. 129) |
+| Zona beli saat harga di high baru | Jauh di bawah harga (118–124) | **Menempel di harga (137–139,5)** |
 | Zona jual saat high berjalan | Kosong (tidak ada koreksi sesudah high) | Diukur dari dasar leg berjalan |
-| Sumber low premier | Swing low | **Tetap** swing low (tidak diubah) |
 
 **Ambang ZigZag** = `1,5 × rata-rata rentang candle (high−low)`, dibatasi **0,6%–3,0%**. Rentang candle dipakai (bukan gerak close-ke-close) supaya noise intrabar kecil tidak memecah satu ayunan menjadi banyak pivot palsu.
 
@@ -289,7 +293,7 @@ Sempat dilaporkan tab Screener terasa lama memuat. Setelah diukur langsung ke Tr
 
 | # | Syarat | Status |
 | :-: | :--- | :--- |
-| 1 | Pola premier (kenaikan signifikan setelah swing low) | ✅ Ditegakkan (`findPremierLeg`: low sebelum high + lonjakan ≥ ambang adaptif) |
+| 1 | Pola premier (kenaikan signifikan setelah swing low) | ✅ Ditegakkan (`findPremierLeg`: dua titik terakhir + lonjakan ≥ ambang adaptif) |
 | 2 | Pola sekunder (koreksi setelah pola premier) | ✅ Ditegakkan; bila belum terbentuk, zona jual diberi label **proyeksi** |
 | 3 | Tarikan 1 = LOW PREMIER → HIGH PREMIER (zona beli) | ✅ |
 | 4 | Tunggu harga tembus < 0,5 dan tidak lebih rendah dari 0,618 | ✅ (`dippedBelow05` & `heldAbove0618`) |

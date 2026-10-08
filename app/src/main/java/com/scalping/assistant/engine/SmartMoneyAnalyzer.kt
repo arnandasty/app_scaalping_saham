@@ -518,7 +518,8 @@ object SmartMoneyAnalyzer {
         if (zigzagHighs.isEmpty() || swingLows.isEmpty()) return emptyFib(window)
 
         // --- 1 & 3: POLA PREMIER -> tarikan 1 (zona beli) ---
-        val premierPair = findPremierLeg(window, zigzagHighs, swingLows) ?: return emptyFib(window)
+        val premierPair = findPremierLeg(window, zigzagHighs, swingLows, zigzagLows)
+            ?: return emptyFib(window)
         val premierLeg = makeLeg(
             FibKind.PREMIER,
             window[premierPair.first].low,
@@ -615,47 +616,74 @@ object SmartMoneyAnalyzer {
     }
 
     /**
-     * Mencari pola premier: pasangan (indeks titik terendah, indeks high) terakhir dengan
-     * titik terendah SEBELUM high dan kenaikan yang cukup signifikan.
+     * Mencari pola premier: pasangan (indeks titik low acuan, indeks high).
+     *
+     * Prinsip yang dipakai adalah **DUA TITIK TERAKHIR**: high TERBARU (mis. higher high yang
+     * masih berjalan) dipasangkan dengan pivot low TERDEKAT sebelum high itu (higher low
+     * terdekat). Cara ini membuat kedua tarikan menempel pada harga terkini, bukan pada titik
+     * asal tren yang jauh di bawah — inilah yang diminta pengguna saat harga sedang mencetak
+     * higher high baru dan koreksi belum terjadi.
+     *
+     * Bila leg dua-titik-terakhir ternyata kurang signifikan (< ambang adaptif), barulah
+     * ditelusuri high yang lebih tua sebagai cadangan supaya struktur yang lebih besar tetap
+     * terbaca.
      *
      * [highs] sebaiknya berasal dari pivot ZigZag ([findZigZagPivots]) agar high terbaru/hari
-     * ini ikut dipertimbangkan; [lows] tetap dari deteksi swing.
-     *
-     * Ambang "signifikan" memakai ambang adaptif yang sama seperti Order Block,
-     * supaya definisi kenaikan penting tetap menyesuaikan volatilitas saham.
+     * ini ikut dipertimbangkan; [swingLows] dan [zigzagLows] dipakai untuk titik low acuan.
      */
     private fun findPremierLeg(
         window: List<Candle>,
         highs: List<SwingPoint>,
-        lows: List<SwingPoint>
+        swingLows: List<SwingPoint>,
+        zigzagLows: List<SwingPoint>
     ): Pair<Int, Int>? {
         val minImpulse = adaptiveImpulseThreshold(window, 5)
-        for (high in highs.asReversed()) {
-            if (high.index <= 0) continue
 
-            // Titik low premier: utamakan swing low, dan bila tidak ada swing low
-            // sebelum swing high, pakai low candle terendah pada rentang tersebut.
-            // Cadangan ini penting untuk saham bertick kasar yang swing low-nya
-            // jarang terbentuk (mis. GOTO di harga puluhan rupiah).
-            val priorLows = lows.filter { it.index < high.index }
-            val lowIndex: Int
-            val lowPrice: Double
-            if (priorLows.isNotEmpty()) {
-                val lowest = priorLows.minByOrNull { it.price } ?: continue
-                lowIndex = lowest.index
-                lowPrice = lowest.price
-            } else {
-                val sub = window.subList(0, high.index)
-                val idx = sub.indices.minByOrNull { sub[it].low } ?: continue
-                lowIndex = idx
-                lowPrice = sub[idx].low
+        // --- Prioritas: DUA TITIK TERAKHIR (high terbaru + low terdekat sebelumnya) ---
+        val lastHigh = highs.lastOrNull { it.index > 0 }
+        if (lastHigh != null) {
+            val anchor = lowestPriorLow(window, swingLows, zigzagLows, lastHigh.index)
+            if (anchor != null) {
+                val (lowIndex, lowPrice) = anchor
+                if (lowPrice > 0.0) {
+                    val impulse = (lastHigh.price - lowPrice) / lowPrice * 100.0
+                    if (impulse >= minImpulse) return lowIndex to lastHigh.index
+                }
             }
+        }
 
+        // --- Cadangan: telusuri high yang lebih tua bila leg terbaru kurang signifikan ---
+        for (high in highs.asReversed()) {
+            if (high.index <= 0 || high.index == lastHigh?.index) continue
+            val anchor = lowestPriorLow(window, swingLows, zigzagLows, high.index) ?: continue
+            val (lowIndex, lowPrice) = anchor
             if (lowPrice <= 0.0) continue
             val impulse = (high.price - lowPrice) / lowPrice * 100.0
             if (impulse >= minImpulse) return lowIndex to high.index
         }
         return null
+    }
+
+    /**
+     * Titik low acuan sebelum [beforeIndex], dengan urutan prioritas:
+     * 1. pivot ZigZag low TERAKHIR sebelum [beforeIndex] = higher low TERDEKAT (dua titik terakhir)
+     * 2. swing low terendah sebelum [beforeIndex]
+     * 3. low candle terendah pada rentang sebelum [beforeIndex]
+     *
+     * Cadangan 3 penting untuk saham bertick kasar yang swing/pivot low-nya jarang terbentuk.
+     */
+    private fun lowestPriorLow(
+        window: List<Candle>,
+        swingLows: List<SwingPoint>,
+        zigzagLows: List<SwingPoint>,
+        beforeIndex: Int
+    ): Pair<Int, Double>? {
+        zigzagLows.lastOrNull { it.index < beforeIndex }?.let { return it.index to it.price }
+        swingLows.filter { it.index < beforeIndex }.minByOrNull { it.price }?.let { return it.index to it.price }
+        if (beforeIndex <= 0) return null
+        val sub = window.subList(0, beforeIndex)
+        val idx = sub.indices.minByOrNull { sub[it].low } ?: return null
+        return idx to sub[idx].low
     }
 
     /**
