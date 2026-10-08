@@ -1,7 +1,5 @@
 package com.scalping.assistant.ui
 
-import android.app.AlertDialog
-import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -9,14 +7,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
-import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.scalping.assistant.MainActivity
 import com.scalping.assistant.R
 import com.scalping.assistant.data.models.BandarDetectorStat
 import com.scalping.assistant.data.models.StockAnalysis
-import com.scalping.assistant.data.repository.GroqAiRepository
+import com.scalping.assistant.data.repository.AiConfig
+import com.scalping.assistant.data.repository.AiRepository
 import com.scalping.assistant.data.repository.PortfolioTrade
 import com.scalping.assistant.data.repository.YahooFinanceRepository
 import kotlinx.coroutines.launch
@@ -27,7 +25,7 @@ class PortfolioRescueBottomSheet(
     private val bandarDetector: BandarDetectorStat? = null
 ) : BottomSheetDialogFragment() {
 
-    private val groqRepo = GroqAiRepository()
+    private val aiRepo = AiRepository()
     private val yahooRepo = YahooFinanceRepository()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -85,11 +83,13 @@ class PortfolioRescueBottomSheet(
         layoutRescueLoading: View,
         btnRefreshRescue: Button
     ) {
-        val prefs = requireContext().getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
-        val key = prefs.getString("groq_api_key", "") ?: ""
+        val ctx = requireContext()
+        val key = AiConfig.apiKey(ctx)
 
-        if (key.isBlank()) {
-            tvRescueContent.text = "⚠️ Groq API Key belum disetel. Silakan buka detail saham mana saja lalu atur di tombol ⚙️ API Key."
+        // Hanya Groq yang benar-benar butuh API Key. 9Router (default) boleh tanpa key,
+        // jadi jangan memblokir analisis hanya karena kolom key kosong.
+        if (key.isBlank() && AiConfig.baseUrl(ctx).contains("groq.com", ignoreCase = true)) {
+            tvRescueContent.text = "⚠️ API Key Groq belum disetel. Buka detail saham mana saja lalu isi di tombol ⚙️ API Key."
             tvRescueContent.setTextColor(Color.parseColor("#EF4444"))
             return
         }
@@ -101,7 +101,7 @@ class PortfolioRescueBottomSheet(
 
         lifecycleScope.launch {
             val dailyTech = yahooRepo.fetchDailyTechnicals(trade.ticker)
-            val result = groqRepo.getPortfolioRescueAnalysis(trade, analysis, bandarDetector, dailyTech, key)
+            val result = aiRepo.getPortfolioRescueAnalysis(ctx, trade, analysis, bandarDetector, dailyTech, key)
 
             if (!isAdded) return@launch
             btnRefreshRescue.isEnabled = true
@@ -111,7 +111,7 @@ class PortfolioRescueBottomSheet(
                 tvRescueContent.text = result.getOrNull()
                 tvRescueContent.setTextColor(Color.parseColor("#F1F5F9"))
             } else {
-                val err = result.exceptionOrNull()?.message ?: "Gagal menghubungi Groq AI"
+                val err = result.exceptionOrNull()?.message ?: "Gagal menghubungi AI"
                 tvRescueContent.text = "⚠️ $err"
                 tvRescueContent.setTextColor(Color.parseColor("#EF4444"))
             }

@@ -30,16 +30,20 @@ data class DailyTechnicalSummary(
  * Timeframe candle untuk analisis Fibonacci & struktur pasar (SMC).
  *
  * [interval] dan [range] mengikuti parameter API chart Yahoo Finance.
- * [analysisWindow] adalah jumlah candle yang dipakai sebagai jendela analisis
- * (diset mendekati jumlah candle yang benar-benar tersedia agar tidak sia-sia).
+ * [analysisWindow] adalah jumlah candle terakhir yang dipakai sebagai jendela analisis
+ * Fibonacci & struktur pasar. Diseragamkan 100 candle untuk SEMUA timeframe: cukup dalam
+ * agar swing dan dua tarikan Fibonacci terbentuk, tetapi tetap ringan dihitung.
  *
  * CATATAN PENTING soal jumlah candle (terukur pada emiten IDX):
- * IDX hanya buka ~20-21 hari/bulan, jadi 1 bulan ≈ 21 candle harian.
- * Deteksi swing butuh 3 candle di kiri + 3 di kanan, sehingga 6 candle
- * pertama & terakhir tidak bisa jadi titik swing. Akibatnya rentang 1-2 bulan
- * (23-43 candle) hanya menyisakan 2-3 swing dan setup Fibonacci-nya tipis
- * (sering OVERSHOOT). Minimal ~60 candle (≈3 bulan) agar struktur & dua
+ * IDX hanya buka ~20-21 hari/bulan, jadi 1 bulan ≈ 21 candle harian. Deteksi swing butuh
+ * 3 candle di kiri + 3 di kanan, sehingga 6 candle pertama & terakhir tidak bisa jadi titik
+ * swing. Akibatnya rentang 1-2 bulan (23-43 candle) hanya menyisakan 2-3 swing dan setup
+ * Fibonacci-nya tipis (sering OVERSHOOT). Minimal ~60 candle (≈3 bulan) agar struktur & dua
  * tarikan Fibonacci bisa diandalkan.
+ *
+ * Jumlah candle terukur (BBCA/GOTO, 8 Okt 2026): 15m/5d = 138, 15m/1mo = 640, 1d/3mo = 67,
+ * 1d/6mo = 132. Artinya jendela 100 candle terisi penuh di semua pilihan, dan 640 candle dari
+ * 15m/1mo dipangkas otomatis oleh jendela tersebut sehingga tidak membebani perhitungan.
  */
 enum class CandleTimeframe(
     val label: String,
@@ -49,17 +53,32 @@ enum class CandleTimeframe(
     /** Perkiraan jangka waktu yang tercakup, untuk keterangan di UI. */
     val horizon: String
 ) {
-    /** 15 menit x 5 hari. Scalping intraday. */
+    /**
+     * 15 menit x 5 hari (~138 candle terukur).
+     *
+     * DIPERTAHANKAN untuk pipeline Scalping (tab Manual/Movers) yang memang butuh data per
+     * menit. Ini BUKAN pilihan TF di tab Screener — yang dipakai screener adalah
+     * [INTRADAY_BULAN1] supaya riwayatnya cukup panjang untuk jendela 100 candle.
+     */
     INTRADAY("15M", "15m", "5d", 120, "~5 hari"),
 
+    /**
+     * 15 menit x 1 bulan (~640 candle terukur). Pilihan TF intraday di tab Screener.
+     *
+     * Dipakai bila gerak intraday justru lebih akurat menggambarkan tarikan Fibonacci
+     * (mis. emiten yang berbalik arah dalam beberapa jam). Level 15M ini bisa dibandingkan
+     * langsung dengan level harian karena keduanya memakai jendela 100 candle terakhir.
+     */
+    INTRADAY_BULAN1("15M", "15m", "1mo", 100, "~1 bulan"),
+
     /** 1 jam x 1 bulan. Swing pendek dalam hari. */
-    BULAN1("1H", "60m", "1mo", 150, "~1 bulan"),
+    BULAN1("1H", "60m", "1mo", 100, "~1 bulan"),
 
-    /** 1 hari x 3 bulan. Candle HARIAN — default gaya swing 3-10 hari. */
-    BULAN3("1D", "1d", "3mo", 70, "~3 bulan"),
+    /** 1 hari x 3 bulan (~67 candle terukur). Candle HARIAN — default gaya Daytrade & Swing. */
+    BULAN3("1D", "1d", "3mo", 100, "~3 bulan"),
 
-    /** 1 hari x 6 bulan. Konteks tren besar. */
-    BULAN6("1D", "1d", "6mo", 130, "~6 bulan");
+    /** 1 hari x 6 bulan (~132 candle terukur). Konteks tren besar. */
+    BULAN6("1D", "1d", "6mo", 100, "~6 bulan");
 
     /** Kunci cache agar tiap timeframe punya cache sendiri. */
     val cacheKey: String get() = "$interval|$range"
@@ -67,10 +86,11 @@ enum class CandleTimeframe(
     /**
      * true bila satu candle = satu HARI.
      *
-     * Tab Screener hanya memakai candle harian supaya analisis emiten konsisten:
-     * struktur pasar, Order Block, dan Fibonacci dibaca dari kerangka harian (1D),
-     * bukan dari gerak intraday. Timeframe intraday tetap dipakai oleh pipeline
-     * Scalping (tab Manual/Movers) yang memang butuh data per menit.
+     * Tab Screener kini boleh dibaca dari candle intraday (15M) ATAU harian (1D): pengujian
+     * menunjukkan sebagian emiten lebih akurat dinilai dari gerak intraday. Candle harian
+     * tetap jadi DEFAULT karena paling stabil untuk struktur pasar & dua tarikan Fibonacci.
+     * Pipeline Scalping (tab Manual/Movers) tetap memakai [INTRADAY] dan tidak terpengaruh
+     * oleh pilihan TF di tab Screener.
      */
     val isDaily: Boolean get() = interval == "1d"
 }

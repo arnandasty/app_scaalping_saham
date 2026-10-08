@@ -305,7 +305,7 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- Groq AI Advisor Card -->
+        <!-- Advisor AI Card (9Router / OpenAI-compatible) -->
         <androidx.cardview.widget.CardView
             android:id="@+id/cardGroqAi"
             android:layout_width="match_parent"
@@ -330,7 +330,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="⚡ Groq AI (Senior Scalper)"
+                        android:text="⚡ Advisor AI (Senior Scalper)"
                         android:textColor="#F97316"
                         android:textSize="13sp"
                         android:textStyle="bold" />
@@ -354,7 +354,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="Opini second-opinion scalper &amp; swing via ultra-low latency Groq Cloud"
+                    android:text="Second-opinion scalper &amp; swing via 9Router (endpoint OpenAI-compatible). Data TradingView delayed ± 10 menit — harga real-time tetap dari Stockbit."
                     android:textColor="@color/text_muted"
                     android:textSize="11sp" />
 
@@ -420,7 +420,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:lineSpacingExtra="3dp"
-                        android:text="Ketuk tombol di bawah untuk meminta opini Groq AI terkait posisi akumulasi bandar dan timing entry."
+                        android:text="Ketuk tombol di bawah untuk meminta opini AI terkait posisi akumulasi bandar dan timing entry."
                         android:textColor="@color/text_secondary"
                         android:textIsSelectable="true"
                         android:textSize="12sp" />
@@ -445,7 +445,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginStart="8dp"
-                            android:text="Menghubungi Groq AI..."
+                            android:text="Menghubungi AI..."
                             android:textColor="#F97316"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -457,7 +457,7 @@
                     android:layout_height="40dp"
                     android:layout_marginTop="8dp"
                     android:backgroundTint="#F97316"
-                    android:text="⚡ Minta Opini Scalper (Groq AI)"
+                    android:text="⚡ Minta Opini Scalper (AI)"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp"
                     android:textStyle="bold" />

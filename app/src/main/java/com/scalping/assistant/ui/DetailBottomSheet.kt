@@ -20,8 +20,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.scalping.assistant.MainActivity
 import com.scalping.assistant.R
 import com.scalping.assistant.data.models.StockAnalysis
-import com.scalping.assistant.data.repository.GroqAiRepository
-import com.scalping.assistant.data.repository.GroqAnalysisMode
+import com.scalping.assistant.data.repository.AiAnalysisMode
+import com.scalping.assistant.data.repository.AiConfig
+import com.scalping.assistant.data.repository.AiRepository
 import com.scalping.assistant.data.repository.PortfolioTrade
 import com.scalping.assistant.data.repository.YahooFinanceRepository
 import kotlinx.coroutines.launch
@@ -31,9 +32,9 @@ import java.util.TimeZone
 
 class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFragment() {
 
-    private val groqRepo = GroqAiRepository()
+    private val aiRepo = AiRepository()
     private val yahooRepo = YahooFinanceRepository()
-    private var selectedGroqMode: GroqAnalysisMode = GroqAnalysisMode.SCALPING
+    private var selectedAiMode: AiAnalysisMode = AiAnalysisMode.SCALPING
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.bottom_sheet_detail, container, false)
@@ -68,12 +69,12 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
         val etEntryPrice: EditText = view.findViewById(R.id.etEntryPrice)
         val etLotAmount: EditText = view.findViewById(R.id.etLotAmount)
 
-        // Groq AI Widgets
-        val tvGroqSummary: TextView = view.findViewById(R.id.tvGroqSummary)
-        val layoutGroqLoading: View = view.findViewById(R.id.layoutGroqLoading)
-        val tvGroqLoadingStatus: TextView = view.findViewById(R.id.tvGroqLoadingStatus)
-        val btnAskGroq: Button = view.findViewById(R.id.btnAskGroq)
-        val btnGroqSettings: Button = view.findViewById(R.id.btnGroqSettings)
+        // Advisor AI Widgets (9Router / OpenAI-compatible)
+        val tvAiSummary: TextView = view.findViewById(R.id.tvGroqSummary)
+        val layoutAiLoading: View = view.findViewById(R.id.layoutGroqLoading)
+        val tvAiLoadingStatus: TextView = view.findViewById(R.id.tvGroqLoadingStatus)
+        val btnAskAi: Button = view.findViewById(R.id.btnAskGroq)
+        val btnAiSettings: Button = view.findViewById(R.id.btnGroqSettings)
         val chipModeScalping: TextView = view.findViewById(R.id.chipModeScalping)
         val chipModeSwing: TextView = view.findViewById(R.id.chipModeSwing)
         val chipModeRescue: TextView = view.findViewById(R.id.chipModeRescue)
@@ -83,15 +84,15 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
             chipModeRescue.visibility = View.VISIBLE
             // Jika sedang floating loss / harga di bawah modal, utamakan mode Dokter Rescue Porto
             if (activeTrade.pnlPercent < 0 || (activeTrade.entryPrice > 0 && item.lastPrice < activeTrade.entryPrice)) {
-                selectedGroqMode = GroqAnalysisMode.PORTFOLIO_RESCUE
+                selectedAiMode = AiAnalysisMode.PORTFOLIO_RESCUE
             } else {
-                selectedGroqMode = if (isMarketOpen()) GroqAnalysisMode.SCALPING else GroqAnalysisMode.SWING
+                selectedAiMode = if (isMarketOpen()) AiAnalysisMode.SCALPING else AiAnalysisMode.SWING
             }
         } else {
             chipModeRescue.visibility = View.GONE
-            selectedGroqMode = if (isMarketOpen()) GroqAnalysisMode.SCALPING else GroqAnalysisMode.SWING
+            selectedAiMode = if (isMarketOpen()) AiAnalysisMode.SCALPING else AiAnalysisMode.SWING
         }
-        updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
+        updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskAi, tvAiSummary)
 
         val initialBandar = (activity as? MainActivity)?.orderBookRepo?.getBandarDetector(item.ticker) ?: item.bandarDetector
         if (initialBandar != null) {
@@ -115,28 +116,28 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
         }
 
         chipModeScalping.setOnClickListener {
-            selectedGroqMode = GroqAnalysisMode.SCALPING
-            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
+            selectedAiMode = AiAnalysisMode.SCALPING
+            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskAi, tvAiSummary)
         }
 
         chipModeSwing.setOnClickListener {
-            selectedGroqMode = GroqAnalysisMode.SWING
+            selectedAiMode = AiAnalysisMode.SWING
             (activity as? MainActivity)?.requestMultiDayBandarDetector(item.ticker, force = true)
-            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
+            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskAi, tvAiSummary)
         }
 
         chipModeRescue.setOnClickListener {
-            selectedGroqMode = GroqAnalysisMode.PORTFOLIO_RESCUE
+            selectedAiMode = AiAnalysisMode.PORTFOLIO_RESCUE
             (activity as? MainActivity)?.requestMultiDayBandarDetector(item.ticker, force = true)
-            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskGroq, tvGroqSummary)
+            updateModeUi(chipModeScalping, chipModeSwing, chipModeRescue, btnAskAi, tvAiSummary)
         }
 
-        btnGroqSettings.setOnClickListener {
-            showGroqApiKeyDialog()
+        btnAiSettings.setOnClickListener {
+            showAiSettingsDialog()
         }
 
-        btnAskGroq.setOnClickListener {
-            requestGroqAnalysis(tvGroqSummary, layoutGroqLoading, tvGroqLoadingStatus, btnAskGroq)
+        btnAskAi.setOnClickListener {
+            requestAiAnalysis(tvAiSummary, layoutAiLoading, tvAiLoadingStatus, btnAskAi)
         }
 
         val sign = if (item.changePercent > 0) "+" else ""
@@ -366,55 +367,66 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
         }
     }
 
-    private fun getGroqApiKey(): String {
-        val prefs = requireContext().getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
-        return prefs.getString("groq_api_key", "") ?: ""
-    }
+    private fun getAiApiKey(): String = AiConfig.apiKey(requireContext())
 
-    private fun saveGroqApiKey(key: String) {
-        val prefs = requireContext().getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
-        prefs.edit().putString("groq_api_key", key.trim()).apply()
-    }
-
-    private fun showGroqApiKeyDialog(onSaved: (() -> Unit)? = null) {
+    /**
+     * Dialog setelan AI: Base URL + API Key + Model.
+     *
+     * Ketiganya sengaja bisa diubah dari HP supaya berpindah antara 9Router di PC (IP LAN),
+     * emulator (`10.0.2.2`), tunnel publik, atau Groq Cloud cukup lewat dialog ini tanpa
+     * build ulang. Nilai awal diambil dari [AiConfig].
+     */
+    private fun showAiSettingsDialog(onSaved: (() -> Unit)? = null) {
         val ctx = context ?: return
-        val currentKey = getGroqApiKey()
+        val currentBase = AiConfig.baseUrl(ctx)
+        val currentModel = AiConfig.model(ctx)
+        val currentKey = getAiApiKey()
 
-        val input = EditText(ctx).apply {
-            hint = "gsk_..."
-            setText(currentKey)
+        fun widget(hintText: String, value: String) = EditText(ctx).apply {
+            hint = hintText
+            setText(value)
             setSingleLine(true)
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
             setBackgroundColor(Color.parseColor("#1E293B"))
-            setPadding(32, 28, 32, 28)
+            setPadding(32, 24, 32, 24)
+        }
+
+        val inputBase = widget(AiConfig.DEFAULT_BASE_URL, currentBase)
+        val inputModel = widget(AiConfig.DEFAULT_MODEL, currentModel)
+        val inputKey = widget("API Key (boleh kosong untuk 9Router)", currentKey)
+
+        fun label(text: String) = TextView(ctx).apply {
+            this.text = text
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 11f
+            setPadding(4, 12, 4, 2)
         }
 
         val container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 24, 48, 12)
-            addView(input)
+            setPadding(48, 12, 48, 8)
+            addView(label("Base URL (9Router / OpenAI-compatible)"))
+            addView(inputBase)
+            addView(label("Model"))
+            addView(inputModel)
+            addView(label("API Key"))
+            addView(inputKey)
         }
 
         AlertDialog.Builder(ctx)
-            .setTitle("⚙️ Konfigurasi Groq AI")
-            .setMessage("Model: Groq Cloud Ultra-Fast (<300ms)\n\nMasukkan API Key Groq Anda. Jika belum punya, ambil gratis tanpa kartu kredit di console.groq.com/keys")
+            .setTitle("⚙️ Konfigurasi Advisor AI")
+            .setMessage("Default: 9Router di PC via Wi-Fi yang sama (${AiConfig.DEFAULT_BASE_URL}).\nEmulator: ${AiConfig.EMULATOR_BASE_URL}.\nAPI Key boleh kosong bila 9Router tanpa auth.")
             .setView(container)
             .setPositiveButton("Simpan") { _, _ ->
-                val key = input.text.toString().trim()
-                saveGroqApiKey(key)
-                if (key.isNotEmpty()) {
-                    Toast.makeText(ctx, "✅ API Key Groq berhasil disimpan", Toast.LENGTH_SHORT).show()
-                    onSaved?.invoke()
-                } else {
-                    Toast.makeText(ctx, "API Key dikosongkan", Toast.LENGTH_SHORT).show()
-                }
+                AiConfig.save(ctx, inputBase.text.toString(), inputKey.text.toString(), inputModel.text.toString())
+                Toast.makeText(ctx, "✅ Setelan AI berhasil disimpan", Toast.LENGTH_SHORT).show()
+                onSaved?.invoke()
             }
             .setNegativeButton("Batal", null)
-            .setNeutralButton("Daftar Groq") { _, _ ->
+            .setNeutralButton("Buka 9Router") { _, _ ->
                 try {
-                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://console.groq.com/keys"))
-                    startActivity(browserIntent)
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://localhost:20128")))
                 } catch (e: Exception) {
                     Toast.makeText(ctx, "Gagal membuka browser", Toast.LENGTH_SHORT).show()
                 }
@@ -436,11 +448,11 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
         chipScalping: TextView,
         chipSwing: TextView,
         chipRescue: TextView,
-        btnAskGroq: Button,
-        tvGroqSummary: TextView
+        btnAskAi: Button,
+        tvAiSummary: TextView
     ) {
-        when (selectedGroqMode) {
-            GroqAnalysisMode.SCALPING -> {
+        when (selectedAiMode) {
+            AiAnalysisMode.SCALPING -> {
                 chipScalping.setBackgroundResource(R.drawable.bg_chip_active)
                 chipScalping.setTextColor(Color.WHITE)
                 chipSwing.setBackgroundResource(R.drawable.bg_chip)
@@ -448,10 +460,10 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
                 chipRescue.setBackgroundResource(R.drawable.bg_chip)
                 chipRescue.setTextColor(Color.parseColor("#94A3B8"))
 
-                btnAskGroq.text = "⚡ Minta Opini Scalper (Groq AI)"
-                btnAskGroq.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#F97316"))
+                btnAskAi.text = "⚡ Minta Opini Scalper (AI)"
+                btnAskAi.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#F97316"))
             }
-            GroqAnalysisMode.SWING -> {
+            AiAnalysisMode.SWING -> {
                 chipScalping.setBackgroundResource(R.drawable.bg_chip)
                 chipScalping.setTextColor(Color.parseColor("#94A3B8"))
                 chipSwing.setBackgroundResource(R.drawable.bg_chip_active_blue)
@@ -459,10 +471,10 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
                 chipRescue.setBackgroundResource(R.drawable.bg_chip)
                 chipRescue.setTextColor(Color.parseColor("#94A3B8"))
 
-                btnAskGroq.text = "🌙 Analisis Swing & Broksum (Groq AI)"
-                btnAskGroq.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#0EA5E9"))
+                btnAskAi.text = "🌙 Analisis Swing & Broksum (AI)"
+                btnAskAi.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#0EA5E9"))
             }
-            GroqAnalysisMode.PORTFOLIO_RESCUE -> {
+            AiAnalysisMode.PORTFOLIO_RESCUE -> {
                 chipScalping.setBackgroundResource(R.drawable.bg_chip)
                 chipScalping.setTextColor(Color.parseColor("#94A3B8"))
                 chipSwing.setBackgroundResource(R.drawable.bg_chip)
@@ -470,53 +482,56 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
                 chipRescue.setBackgroundResource(R.drawable.bg_chip_active_red)
                 chipRescue.setTextColor(Color.WHITE)
 
-                btnAskGroq.text = "🩺 Diagnosa Penyelamatan Porto (Groq AI)"
-                btnAskGroq.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#EF4444"))
+                btnAskAi.text = "🩺 Diagnosa Penyelamatan Porto (AI)"
+                btnAskAi.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#EF4444"))
             }
         }
     }
 
-    private fun requestGroqAnalysis(
-        tvGroqSummary: TextView,
-        layoutGroqLoading: View,
-        tvGroqLoadingStatus: TextView,
-        btnAskGroq: Button
+    private fun requestAiAnalysis(
+        tvAiSummary: TextView,
+        layoutAiLoading: View,
+        tvAiLoadingStatus: TextView,
+        btnAskAi: Button
     ) {
-        val key = getGroqApiKey()
-        if (key.isBlank()) {
-            showGroqApiKeyDialog {
-                requestGroqAnalysis(tvGroqSummary, layoutGroqLoading, tvGroqLoadingStatus, btnAskGroq)
+        val ctx = requireContext()
+        val key = AiConfig.apiKey(ctx)
+        // API Key hanya wajib untuk Groq Cloud. 9Router boleh tanpa key, jadi pengguna tidak
+        // dipaksa mengisi apa pun saat memakai model lokal.
+        if (key.isBlank() && AiConfig.baseUrl(ctx).contains("groq.com", ignoreCase = true)) {
+            showAiSettingsDialog {
+                requestAiAnalysis(tvAiSummary, layoutAiLoading, tvAiLoadingStatus, btnAskAi)
             }
             return
         }
 
-        btnAskGroq.isEnabled = false
-        layoutGroqLoading.visibility = View.VISIBLE
+        btnAskAi.isEnabled = false
+        layoutAiLoading.visibility = View.VISIBLE
 
-        when (selectedGroqMode) {
-            GroqAnalysisMode.PORTFOLIO_RESCUE -> {
-                tvGroqLoadingStatus.text = "Dokter Saham Mendiagnosa..."
-                tvGroqSummary.text = "Mendiagnosa akumulasi bandar, support teknikal harian, dan rasio risiko cut loss / avg down..."
+        when (selectedAiMode) {
+            AiAnalysisMode.PORTFOLIO_RESCUE -> {
+                tvAiLoadingStatus.text = "Dokter Saham Mendiagnosa..."
+                tvAiSummary.text = "Mendiagnosa akumulasi bandar, support teknikal harian, dan rasio risiko cut loss / avg down..."
             }
-            GroqAnalysisMode.SWING -> {
-                tvGroqLoadingStatus.text = "Menghubungi Groq AI..."
-                tvGroqSummary.text = "Sedang menarik data harian Yahoo Finance & menganalisis posisi swing..."
+            AiAnalysisMode.SWING -> {
+                tvAiLoadingStatus.text = "Menghubungi AI..."
+                tvAiSummary.text = "Sedang menarik data harian Yahoo Finance & menganalisis posisi swing..."
             }
             else -> {
-                tvGroqLoadingStatus.text = "Menghubungi Groq AI..."
-                tvGroqSummary.text = "Memproses analisis orderflow & bandarmologi scalping..."
+                tvAiLoadingStatus.text = "Menghubungi AI..."
+                tvAiSummary.text = "Memproses analisis orderflow & bandarmologi scalping..."
             }
         }
-        tvGroqSummary.setTextColor(Color.parseColor("#94A3B8"))
+        tvAiSummary.setTextColor(Color.parseColor("#94A3B8"))
 
         lifecycleScope.launch {
             val mainAct = activity as? MainActivity
             var currentBandar = mainAct?.orderBookRepo?.getBandarDetector(item.ticker) ?: item.bandarDetector
-            if (currentBandar == null || (selectedGroqMode == GroqAnalysisMode.SWING && currentBandar.foreignFlowMultiDay.isEmpty())) {
+            if (currentBandar == null || (selectedAiMode == AiAnalysisMode.SWING && currentBandar.foreignFlowMultiDay.isEmpty())) {
                 mainAct?.requestBandarDetector(item.ticker, force = true)
                 mainAct?.requestMultiDayBandarDetector(item.ticker, force = true)
                 var attempts = 0
-                while ((currentBandar == null || (selectedGroqMode == GroqAnalysisMode.SWING && currentBandar?.foreignFlowMultiDay.isNullOrEmpty())) && attempts < 6) {
+                while ((currentBandar == null || (selectedAiMode == AiAnalysisMode.SWING && currentBandar?.foreignFlowMultiDay.isNullOrEmpty())) && attempts < 6) {
                     kotlinx.coroutines.delay(300L)
                     currentBandar = mainAct?.orderBookRepo?.getBandarDetector(item.ticker) ?: currentBandar
                     attempts++
@@ -527,7 +542,7 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
                 if (currentBandar != null) it.copy(bandarDetector = currentBandar) else it
             }
 
-            val result = if (selectedGroqMode == GroqAnalysisMode.PORTFOLIO_RESCUE) {
+            val result = if (selectedAiMode == AiAnalysisMode.PORTFOLIO_RESCUE) {
                 val trade = getActivePortfolioTrade() ?: PortfolioTrade(
                     ticker = item.ticker,
                     entryPrice = item.entryPrice,
@@ -535,34 +550,34 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
                     currentPrice = item.lastPrice
                 )
                 val dailyTech = yahooRepo.fetchDailyTechnicals(item.ticker)
-                groqRepo.getPortfolioRescueAnalysis(trade, analysisItem, currentBandar, dailyTech, key)
+                aiRepo.getPortfolioRescueAnalysis(ctx, trade, analysisItem, currentBandar, dailyTech, key)
             } else {
-                val dailyTech = if (selectedGroqMode == GroqAnalysisMode.SWING) {
+                val dailyTech = if (selectedAiMode == AiAnalysisMode.SWING) {
                     yahooRepo.fetchDailyTechnicals(item.ticker)
                 } else null
-                groqRepo.getAiAnalysis(analysisItem, key, selectedGroqMode, dailyTech)
+                aiRepo.getAiAnalysis(ctx, analysisItem, key, selectedAiMode, dailyTech)
             }
             if (!isAdded) return@launch
 
-            btnAskGroq.isEnabled = true
-            layoutGroqLoading.visibility = View.GONE
+            btnAskAi.isEnabled = true
+            layoutAiLoading.visibility = View.GONE
 
             if (result.isSuccess) {
-                tvGroqSummary.text = result.getOrNull()
-                tvGroqSummary.setTextColor(Color.parseColor("#F1F5F9"))
-                btnAskGroq.text = when (selectedGroqMode) {
-                    GroqAnalysisMode.PORTFOLIO_RESCUE -> "🔄 Segarkan Diagnosa Dokter Porto"
-                    GroqAnalysisMode.SWING -> "🔄 Segarkan Analisis Swing"
+                tvAiSummary.text = result.getOrNull()
+                tvAiSummary.setTextColor(Color.parseColor("#F1F5F9"))
+                btnAskAi.text = when (selectedAiMode) {
+                    AiAnalysisMode.PORTFOLIO_RESCUE -> "🔄 Segarkan Diagnosa Dokter Porto"
+                    AiAnalysisMode.SWING -> "🔄 Segarkan Analisis Swing"
                     else -> "🔄 Segarkan Opini Scalper"
                 }
             } else {
-                val err = result.exceptionOrNull()?.message ?: "Gagal menghubungi Groq"
-                tvGroqSummary.text = "⚠️ $err"
-                tvGroqSummary.setTextColor(Color.parseColor("#EF4444"))
-                btnAskGroq.text = "⚡ Coba Lagi (Groq AI)"
+                val err = result.exceptionOrNull()?.message ?: "Gagal menghubungi AI"
+                tvAiSummary.text = "⚠️ $err"
+                tvAiSummary.setTextColor(Color.parseColor("#EF4444"))
+                btnAskAi.text = "⚡ Coba Lagi (AI)"
 
                 if (err.contains("401") || err.contains("API Key", ignoreCase = true) || err.contains("invalid", ignoreCase = true)) {
-                    Toast.makeText(requireContext(), "API Key mungkin tidak valid. Silakan periksa di tombol ⚙️ API Key.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(requireContext(), "API Key mungkin tidak valid. Periksa di tombol ⚙️ API Key.", Toast.LENGTH_LONG).show()
                 }
             }
         }

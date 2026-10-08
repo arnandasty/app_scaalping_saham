@@ -4,7 +4,20 @@ Semua perubahan signifikan dicatat di sini secara kronologis.
 
 ---
 
-## [v2.4] - 2026-09-06 (Terkini)
+## [v2.5] - 2026-10-08 (Terkini)
+
+### 🔌 Migrasi "Groq AI" → "Advisor AI" (9Router / Endpoint OpenAI-compatible)
+- **Backend AI generik:** Seluruh fitur opini AI (Opini Scalper, Analisis Swing EOD, Dokter Portfolio Rescue) kini memakai endpoint OpenAI-compatible, sehingga bisa diarahkan ke **9Router** (menjalankan model Claude/GLM/GPT secara lokal di PC) maupun **Groq Cloud** tanpa perubahan kode.
+- **Berkas baru `AiConfig.kt`:** Sumber tunggal untuk Base URL, API Key, dan Model. Alamat dinormalkan otomatis (`http://ip:20128`, `.../v1`, atau URL penuh `chat/completions`).
+- **Dialog ⚙️ Setelan AI:** Kini mengatur **Base URL + Model + API Key** sekaligus (sebelumnya hanya API Key Groq). Pengguna bisa berpindah antara 9Router di PC (IP LAN), emulator (`10.0.2.2`), tunnel publik, atau Groq Cloud langsung dari HP tanpa build ulang.
+- **Rantai model (auto-fallback):** Model aktif dicoba lebih dulu, lalu model cadangan. Server yang menolak model (HTTP 404 / pesan "model") dilewati otomatis ke model berikutnya.
+- **API Key opsional untuk 9Router:** 9Router tanpa auth boleh diakses tanpa API Key; pengecekan key wajib hanya berlaku bila Base URL mengarah ke Groq Cloud.
+- **Kompatibilitas setelan lama:** API Key yang tersimpan di kunci lama `groq_api_key` tetap terbaca sebagai nilai awal `ai_api_key`, jadi pengguna lama tidak perlu mengisi ulang.
+- **Rename:** `GroqAiRepository.kt` → `AiRepository.kt`; enum `GroqAnalysisMode` → `AiAnalysisMode`. Label UI diseragamkan menjadi **Advisor AI**.
+
+---
+
+## [v2.4] - 2026-09-06
 
 ### 🌐 Analisis Arus Broker Asing (Multi-Day & Intraday) & Indikator Moving Average (MA 5, MA 9, MA 20)
 - **Analisis Broker Asing (Foreign Flow Engine):**

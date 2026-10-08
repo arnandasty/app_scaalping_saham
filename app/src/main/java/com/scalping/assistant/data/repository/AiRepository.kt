@@ -1,5 +1,6 @@
 package com.scalping.assistant.data.repository
 
+import android.content.Context
 import com.scalping.assistant.data.models.StockAnalysis
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,37 +12,34 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
-enum class GroqAnalysisMode {
+enum class AiAnalysisMode {
     SCALPING,
     SWING,
     PORTFOLIO_RESCUE
 }
 
-class GroqAiRepository {
+class AiRepository {
 
-    // Model candidate list dengan auto-fallback jika salah satu model dideprecate oleh Groq
-    private val candidateModels = listOf(
-        "groq/compound-mini",
-        "groq/compound",
-        "openai/gpt-oss-20b",
-        "qwen/qwen3.6-27b"
-    )
+    // Model dibaca dari Setelan (dialog ⚙️ API Key). Urutannya: model aktif lebih dulu,
+    // lalu model cadangan. Server yang menolak model akan dilewati secara otomatis.
+    private fun modelsFor(ctx: Context): List<String> = AiConfig.modelChain(ctx)
 
-    suspend fun getScalperOpinion(item: StockAnalysis, apiKey: String): Result<String> {
-        return getAiAnalysis(item, apiKey, GroqAnalysisMode.SCALPING, null)
+    suspend fun getScalperOpinion(
+        ctx: Context,
+        item: StockAnalysis,
+        apiKey: String
+    ): Result<String> {
+        return getAiAnalysis(ctx, item, apiKey, AiAnalysisMode.SCALPING, null)
     }
 
     suspend fun getAiAnalysis(
+        ctx: Context,
         item: StockAnalysis,
         apiKey: String,
-        mode: GroqAnalysisMode,
+        mode: AiAnalysisMode,
         dailyTech: DailyTechnicalSummary? = null
     ): Result<String> {
-        if (apiKey.isBlank()) {
-            return Result.failure(Exception("API Key belum disetel. Silakan masukkan Groq API Key Anda."))
-        }
-
-        val systemPrompt = if (mode == GroqAnalysisMode.SCALPING) {
+        val systemPrompt = if (mode == AiAnalysisMode.SCALPING) {
             """
                 Kamu adalah Chief Scalper & Spesialis Bandarmologi di Bursa Efek Indonesia (IDX).
                 Fokus: Intraday Scalping & Tape Reading saat market aktif.
@@ -93,7 +91,7 @@ class GroqAiRepository {
             "Bandar Detector: Menunggu data bursa"
         }
 
-        val userContent = if (mode == GroqAnalysisMode.SCALPING) {
+        val userContent = if (mode == AiAnalysisMode.SCALPING) {
             val tapeInfo = if (item.tapeReading != null) {
                 "Tape Reading: HAKA ${item.tapeReading.totalHakaLot} lot vs HAKI ${item.tapeReading.totalHakiLot} lot"
             } else {
@@ -140,21 +138,18 @@ class GroqAiRepository {
             """.trimIndent()
         }
 
-        val maxTokens = if (mode == GroqAnalysisMode.SWING) 400 else 220
-        return sendChatCompletion(systemPrompt, userContent, apiKey, maxTokens)
+        val maxTokens = if (mode == AiAnalysisMode.SWING) 400 else 220
+        return sendChatCompletion(ctx, systemPrompt, userContent, apiKey, maxTokens)
     }
 
     suspend fun getPortfolioRescueAnalysis(
+        ctx: Context,
         trade: PortfolioTrade,
         item: StockAnalysis?,
         bandarDetector: com.scalping.assistant.data.models.BandarDetectorStat?,
         dailyTech: DailyTechnicalSummary?,
         apiKey: String
     ): Result<String> {
-        if (apiKey.isBlank()) {
-            return Result.failure(Exception("API Key belum disetel. Silakan masukkan Groq API Key Anda."))
-        }
-
         val systemPrompt = """
             Kamu adalah Chief Portfolio Doctor & Senior Risk Manager di Bursa Efek Indonesia (IDX).
             Tugasmu: Mendiagnosis posisi saham trader yang sedang floating loss / nyangkut dan memberikan keputusan penyelamatan (Rescue Plan) yang objektif, tegas, dan rasional.
@@ -225,10 +220,11 @@ class GroqAiRepository {
             Berikan evaluasi objektif dan keputusan penyelamatan posisi nyangkut ini: Cut Loss, Averaging Down, atau Hold?
         """.trimIndent()
 
-        return sendChatCompletion(systemPrompt, userContent, apiKey, 400)
+        return sendChatCompletion(ctx, systemPrompt, userContent, apiKey, 400)
     }
 
     private suspend fun sendChatCompletion(
+        ctx: Context,
         systemPrompt: String,
         userContent: String,
         apiKey: String,
@@ -236,16 +232,23 @@ class GroqAiRepository {
     ): Result<String> = withContext(Dispatchers.IO) {
         var lastException: Exception? = null
 
-        for (model in candidateModels) {
+        // Endpoint & model dibaca dari Setelan, jadi berpindah antara 9Router (IP LAN,
+        // emulator, atau tunnel) dan Groq Cloud cukup lewat dialog ⚙️ API Key.
+        val endpoint = AiConfig.chatEndpoint(ctx)
+        val models = modelsFor(ctx)
+
+        for (model in models) {
             try {
-                val url = URL("https://api.groq.com/openai/v1/chat/completions")
+                val url = URL(endpoint)
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 10000
-                    readTimeout = 10000
+                    connectTimeout = 15000
+                    readTimeout = 60000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Authorization", "Bearer ${apiKey.trim()}")
+                    if (apiKey.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer ${apiKey.trim()}")
+                    }
                     setRequestProperty("User-Agent", "Mozilla/5.0 (Android; ScalpingAssistant/2.1)")
                 }
 
@@ -295,20 +298,30 @@ class GroqAiRepository {
                     } catch (e: Exception) {
                         errorText
                     }
+                    // Cuplikan body ikut ditampilkan (dipotong) supaya kegagalan koneksi
+                    // ke 9Router bisa didiagnosis dari HP tanpa perlu logcat.
+                    val detail = "$errorMsg".trim().take(180)
+                    val salahModel = responseCode == 404 || detail.contains("model", ignoreCase = true)
 
-                    if (responseCode == 404 || errorMsg.contains("model", ignoreCase = true)) {
-                        lastException = Exception("Groq ($model): $errorMsg")
+                    if (salahModel) {
+                        lastException = Exception("Model $model ditolak server: $detail")
                         continue
                     }
 
-                    return@withContext Result.failure(Exception("Groq Error ($responseCode): $errorMsg"))
+                    return@withContext Result.failure(
+                        Exception("Error $responseCode dari $endpoint\n$detail")
+                    )
                 }
             } catch (e: Exception) {
                 lastException = e
             }
         }
 
-        Result.failure(lastException ?: Exception("Gagal menghubungi Groq AI"))
+        Result.failure(
+            lastException ?: Exception(
+                "Gagal menghubungi AI di $endpoint. Periksa apakah 9Router sudah jalan dan alamatnya benar."
+            )
+        )
     }
 
     private fun formatCurrencyShort(amount: Long): String {

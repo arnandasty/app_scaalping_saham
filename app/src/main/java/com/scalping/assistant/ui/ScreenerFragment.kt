@@ -58,6 +58,23 @@ class ScreenerFragment : Fragment() {
          * memicu pembatasan dari Yahoo Finance.
          */
         private const val TIME_SAFE_DEEP_COUNT = 12
+
+        /**
+         * Timeframe yang boleh dipilih di tab Screener.
+         *
+         * Isinya sengaja dikumpulkan di satu tempat supaya chip TF dan default saat gaya
+         * trading berganti selalu memakai sumber yang sama — tidak mungkin ada chip yang
+         * tampil tetapi tidak punya default, atau sebaliknya.
+         *
+         * Semua pilihan memakai jendela analisis 100 candle terakhir (lihat
+         * [CandleTimeframe.analysisWindow]), jadi level Fibonacci 15M dan 1D bisa dibandingkan
+         * langsung: yang berbeda hanya satuan waktunya, bukan kedalaman riwayatnya.
+         */
+        private val SCREENER_TIMEFRAMES = listOf(
+            CandleTimeframe.INTRADAY_BULAN1,  // 15M x 1 bulan (~640 candle)
+            CandleTimeframe.BULAN3,           // 1D x 3 bulan (~67 candle) — default
+            CandleTimeframe.BULAN6            // 1D x 6 bulan (~132 candle)
+        )
     }
 
     private lateinit var rvScreener: RecyclerView
@@ -210,9 +227,10 @@ class ScreenerFragment : Fragment() {
         selectedStyle = style
         exitSearchMode()
         selectedPreset = ScreenerPreset.forStyle(style).first()
-        // Tab Screener hanya berjalan di candle harian; jaring pengaman bila suatu
-        // saat default sebuah gaya diubah ke timeframe intraday.
-        selectedTimeframe = style.defaultTimeframe.let { if (it.isDaily) it else CandleTimeframe.BULAN6 }
+        // Setiap gaya punya default TF sendiri; bila default-nya bukan salah satu pilihan
+        // chip screener, jatuh ke TF default daftar (1D / 3 bulan) agar chip tetap sinkron.
+        selectedTimeframe = style.defaultTimeframe.takeIf { it in SCREENER_TIMEFRAMES }
+            ?: SCREENER_TIMEFRAMES.first { it.isDaily }
         updateStyleChipStyles()
         buildPresetChips()
         updateTimeframeChipStyles()
@@ -266,10 +284,13 @@ class ScreenerFragment : Fragment() {
     /**
      * Membangun chip pemilih timeframe candle.
      *
-     * HANYA candle HARIAN (1D) yang ditampilkan. Tab Screener sengaja dibaca dari
-     * kerangka harian supaya struktur pasar, Order Block, dan dua tarikan Fibonacci
-     * konsisten — bukan dari gerak intraday. Yang berubah antar chip hanyalah
-     * panjang riwayat: 3 bulan (~66 candle) atau 6 bulan (~128 candle).
+     * Tab Screener bisa dibaca dari candle HARIAN (1D) maupun INTRADAY (15M). Pilihan
+     * intraday ditambahkan karena pengujian menunjukkan sebagian emiten lebih akurat dinilai
+     * dari gerak 15 menit — misalnya saat harga berbalik arah dalam beberapa jam sehingga
+     * tarikan Fibonacci harian sudah kedaluwarsa.
+     *
+     * Yang membedakan antar chip hanyalah TIMEFRAME dan PANJANG RIWAYAT, bukan kedalaman
+     * analisis: semuanya memakai jendela 100 candle terakhir.
      */
     private fun buildTimeframeChips() {
         llTimeframes.removeAllViews()
@@ -282,7 +303,7 @@ class ScreenerFragment : Fragment() {
             setPadding(0, 0, dp(8), 0)
         })
 
-        for (tf in CandleTimeframe.entries.filter { it.isDaily }) {
+        for (tf in SCREENER_TIMEFRAMES) {
             val chip = TextView(requireContext()).apply {
                 text = "${tf.label} · ${tf.horizon}"
                 textSize = 11f
@@ -589,11 +610,12 @@ class ScreenerFragment : Fragment() {
 
         // Level Fibonacci dua tarikan, ditampilkan agar bisa dicocokkan dengan grafik.
         score.fibonacci?.premierLeg?.let { premier ->
-            container.addView(sectionTitle(ctx, "Fibonacci — Tarikan 1 (Zona Beli) · TF ${score.timeframe.label}"))
+            container.addView(sectionTitle(ctx, "Fibonacci — Tarikan 1 (Zona Beli) · TF ${score.timeframe.label} (${score.timeframe.horizon})"))
             container.addView(infoLine(ctx, "Leg: low ${fmtPrice(premier.startPrice)} → high ${fmtPrice(premier.endPrice)}"))
             container.addView(infoLine(ctx, "0,500 = ${fmtPrice(premier.level05)}   ·   0,618 = ${fmtPrice(premier.level0618)}"))
             container.addView(infoLine(ctx, "0,850 = ${fmtPrice(premier.level085)}   ·   1,618 (ekstensi) = ${fmtPrice(premier.extension1618)}"))
             container.addView(infoLine(ctx, "Zona beli 0,5-0,618 = ${fmtPrice(premier.zoneHigh)} – ${fmtPrice(premier.zoneLow)}"))
+            container.addView(infoLine(ctx, "Jendela analisis: ${score.timeframe.analysisWindow} candle terakhir (${score.timeframe.interval} × ${score.timeframe.range})"))
 
             score.fibonacci?.secondaryLeg?.let { secondary ->
                 container.addView(sectionTitle(ctx, "Fibonacci — Tarikan 2 (Zona Jual)"))

@@ -167,7 +167,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="🩺 Resep Dokter Portfolio (Groq AI)"
+                        android:text="🩺 Resep Dokter Portfolio (Advisor AI)"
                         android:textColor="#F97316"
                         android:textSize="13sp"
                         android:textStyle="bold" />
@@ -227,7 +227,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginStart="8dp"
-                            android:text="Menghubungi Groq AI &amp; menganalisis data pasar..."
+                            android:text="Menghubungi AI &amp; menganalisis data pasar..."
                             android:textColor="#F97316"
                             android:textSize="11sp" />
                     </LinearLayout>

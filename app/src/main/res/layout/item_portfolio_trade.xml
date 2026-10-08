@@ -233,7 +233,7 @@
             android:textColor="@color/text_muted"
             android:textSize="10sp" />
 
-        <!-- Tombol Konsultasi Rescue Groq AI -->
+        <!-- Tombol Konsultasi Rescue Advisor AI -->
         <Button
             android:id="@+id/btnPortfolioAiConsult"
             android:layout_width="match_parent"

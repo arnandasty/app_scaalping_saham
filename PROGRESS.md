@@ -172,7 +172,7 @@ Tab Screener punya baris chip **Gaya** di paling atas. Yang berubah hanya **bobo
 * **Daytrade** menekankan **Volume & Bandarmology** (likuiditas menentukan bisa/tidaknya keluar posisi) dan mengecilkan **Moving Average** (tren jangka panjang hampir tidak relevan untuk posisi singkat).
 * **Swing 3-10 hari** menekankan **Moving Average & Fibonacci** (yang menopang harga selama beberapa hari) dan mengecilkan Volume (lonjakan sehari tidak terlalu berarti).
 
-**Timeframe:** kedua gaya memakai **candle harian (1D)** — lihat bagian E2.
+**Timeframe:** kedua gaya memakai **candle harian (1D)** sebagai default, tetapi chip TF kini juga menyediakan **15M** — lihat bagian E2.
 
 **RSI dinilai berbeda (bukan hanya bobotnya):**
 * **Daytrade** — RSI sangat rendah (oversold) dianggap **peluang pantulan cepat** (rasio 0,8), karena posisi hanya sebentar.
@@ -215,18 +215,23 @@ Titik masuk (entry) dan titik jual (exit) ditampilkan langsung di kartu & dialog
 
 **Lookback swing adaptif:** Diturunkan otomatis bila swing terlalu sedikit, karena saham bertick kasar (harga puluhan rupiah, satuan 1 rupiah) punya banyak high/low kembar. Bila tidak ada swing low sebelum swing high, titik low premier memakai low candle terendah pada rentang tersebut — sehingga saham seperti GOTO (~Rp 30) tetap bisa dianalisis. Status tetap dilaporkan jujur `NONE` hanya bila kenaikannya memang tidak signifikan.
 
-### E2. Timeframe: HANYA Candle Harian (1D)
+### E2. Timeframe: 15M atau 1D, dengan Jendela 100 Candle
 
-Tab Screener **sengaja dibatasi ke candle harian** supaya struktur pasar, Order Block, dan dua tarikan Fibonacci dibaca dari satu kerangka yang konsisten. Yang bisa dipilih pengguna hanyalah **panjang riwayat**:
+Tab Screener bisa dibaca dari **dua kerangka**: intraday **15M** atau harian **1D**. Pilihan 15M ditambahkan karena pengujian menunjukkan sebagian emiten lebih akurat dinilai dari gerak 15 menit (mis. harga berbalik arah dalam beberapa jam sehingga tarikan Fibonacci harian sudah kedaluwarsa).
 
-| Chip | Candle | Range | Candle | Horizon |
+| Chip | Candle | Range | Candle terukur | Horizon |
 | :--- | :--- | :--- | :-: | :--- |
-| **1D** (default) | 1 hari | 3mo | ~66 | ~3 bulan |
-| **1D** | 1 hari | 6mo | ~128 | ~6 bulan |
+| **1D** (default) | 1 hari | 3mo | ~67 | ~3 bulan |
+| **1D** | 1 hari | 6mo | ~132 | ~6 bulan |
+| **15M** | 15 menit | 1mo | ~640 | ~1 bulan |
+
+**Jendela analisis diseragamkan 100 candle** untuk SEMUA pilihan (`CandleTimeframe.analysisWindow = 100`). Jadi yang berbeda antar chip hanyalah **satuan waktu & panjang riwayat yang diunduh** — bukan kedalaman analisisnya. Karena itu level Fibonacci 15M dan 1D bisa dibandingkan langsung.
+
+> Catatan teknis: 640 candle dari 15M/1mo dipangkas otomatis oleh jendela 100 candle, sehingga perhitungan tetap ringan meski unduhannya lebih besar.
 
 Kedua gaya trading (Daytrade & Swing) memakai default yang sama, yaitu **1D / 3 bulan**. Pembeda antar gaya adalah **bobot skor** dan **preset penyaring**, bukan timeframe.
 
-> Pipeline Scalping di tab Manual/Movers **tetap memakai candle 15 menit** karena memang butuh data per menit untuk membaca orderbook. Yang dibatasi ke harian hanya tab Screener.
+> Pipeline Scalping di tab Manual/Movers **tetap memakai candle 15 menit (15m/5d, `INTRADAY`)** karena butuh data per menit untuk membaca orderbook. Tab Screener memakai entri terpisah (`INTRADAY_BULAN1` = 15m/1mo) supaya riwayat intraday-nya cukup panjang untuk jendela 100 candle, dan perubahan di tab Screener tidak menambah beban pipeline Scalping.
 
 **⚠️ Temuan terukur — kenapa minimal 3 bulan:**
 
@@ -239,7 +244,7 @@ IDX hanya buka ~20-21 hari/bulan, jadi 1 bulan ≈ 21 candle harian. Deteksi swi
 | **3 bulan** | **66** | **VALID ✅ / VALID ✅** / OVERSHOOT |
 | 6 bulan | 128 | WAITING / WAITING / OVERSHOOT |
 
-**Kesimpulan:** minimal **~60 candle (≈3 bulan)** agar pola premier + tarikan sekunder bisa diandalkan. Karena itu **1D / 3 bulan** dijadikan default.
+**Kesimpulan:** minimal **~60 candle (≈3 bulan)** agar pola premier + tarikan sekunder bisa diandalkan. Karena itu **1D / 3 bulan** tetap dijadikan **default**, sementara **15M / 1 bulan** disediakan sebagai alternatif yang bisa dipilih pengguna.
 
 ### E3. Catatan Kecepatan (terukur, 7 Okt 2026)
 
@@ -302,14 +307,14 @@ Kolom **🔍 Cari kode / nama saham** di bawah baris peringatan delay.
 ### G. Alur Integrasi
 1. Tab **Screener** berada di indeks 3 (setelah Top Picks) → **Portfolio bergeser ke indeks 4**.
 2. Saat tab dibuka: gaya **Swing 3-10 hari** aktif, preset pertama (✅ Tren Naik) dimuat otomatis dengan candle harian **1D / ~3 bulan**.
-3. Mengganti chip **Gaya** → preset ikut berganti, daftar dimuat ulang. Chip **TF** hanya berisi pilihan harian (3 bulan / 6 bulan) dan mengganti panjang riwayat analisis.
+3. Mengganti chip **Gaya** → preset ikut berganti, daftar dimuat ulang. Chip **TF** berisi **15M (~1 bulan)**, **1D (~3 bulan, default)**, dan **1D (~6 bulan)** — semuanya dianalisis dengan jendela 100 candle terakhir.
 4. Menekan kartu → muncul **dialog rincian skor** (poin & alasan tiap komponen + level Fibonacci dua tarikan + gaya & TF yang dipakai). Tombol "Buka di Stockbit" memindahkan ke tab Manual + membuka emiten di orderbook + meminta data Bandar Detector.
 5. Setelah dibuka, emiten melewati pipeline lama (OrderFlow + Teknikal + ScoringEngine) sehingga sinyal entry tetap berbasis data real-time.
 
 ### H. Status
 * ✅ APK debug berhasil di-build (`app-debug.apk`) — kompilasi Kotlin & resource tervalidasi.
 * ✅ Logika SMC & Fibonacci dua tarikan divalidasi dengan candle nyata (skrip port Node di folder scratch artifact) pada 6 emiten: BBCA, BBRI, ANTM, TLKM, GOTO, SMRA.
-* ✅ Pemilih timeframe divalidasi lintas timeframe pada ANTM, BBRI, TLKM → jadi dasar keputusan memakai **candle harian 1D minimal 3 bulan**.
+* ✅ Pemilih timeframe divalidasi lintas timeframe pada ANTM, BBRI, TLKM → jadi dasar keputusan memakai **candle harian 1D minimal 3 bulan** sebagai default, dengan **15M** tersedia sebagai alternatif.
 * ✅ **Dua gaya trading** (Daytrade & Swing 3-10 hari) dengan bobot berbeda + 8 preset per gaya — seluruh filter terverifikasi HTTP 200 pada scanner IDX.
 * ✅ **Pencarian kode/nama saham** berbasis cache universe (844 emiten, ~293 KB, ~1,3 dtk) — terverifikasi `name` bersifat case-sensitive sehingga pencarian sengaja dilakukan di sisi HP.
 * ✅ **Kecepatan diukur** ke TradingView & Yahoo: 12 candle paralel ~197 ms, 30 candle ~156 ms, 5x berturut-turut stabil ~100 ms. Yahoo **tidak** membatasi permintaan (tidak ada HTTP 429/999), jadi keluhan lambat sebelumnya berasal dari jaringan pengguna.
@@ -317,4 +322,31 @@ Kolom **🔍 Cari kode / nama saham** di bawah baris peringatan delay.
 * ⏳ **Belum diuji di device/live market.** Perlu pengujian saat bursa buka.
 
 ---
+
+## 8. Migrasi AI: "Groq AI" → "Advisor AI" (9Router / Endpoint OpenAI-compatible)
+
+**Latar belakang:** fitur opini AI (Opini Scalper, Analisis Swing EOD, dan Dokter Portfolio Rescue) semula dipaku ke Groq Cloud (model & endpoint hardcoded). Migrasi ini menjadikannya **generik OpenAI-compatible** supaya bisa diarahkan ke **9Router** — proxy model yang berjalan di PC/laptop (`npm install -g 9router`, lalu `9router`, dashboard di `http://localhost:20128`) — yang menyediakan akses model Claude 4.5, GLM, GPT, dan MiniMax.
+
+### A. Komponen
+| Berkas | Perubahan |
+| :--- | :--- |
+| `AiConfig.kt` (baru) | Sumber tunggal Base URL + API Key + Model. Menormalkan alamat (`ip:20128`, `.../v1`, atau URL penuh `chat/completions`). Menyimpan setelan di `SharedPreferences` (`ai_base_url`, `ai_api_key`, `ai_model`). |
+| `AiRepository.kt` | Hasil rename dari `GroqAiRepository.kt`. Enum `GroqAnalysisMode` → `AiAnalysisMode`. Semua panggilan chat memakai endpoint & model dari `AiConfig`. |
+| `DetailBottomSheet.kt` | Dialog ⚙️ kini menyunting **Base URL + Model + API Key** (sebelumnya hanya kunci Groq). |
+| `PortfolioRescueBottomSheet.kt` | Ikut memakai `AiConfig` + `AiRepository` (sebelumnya membaca `groq_api_key` langsung). |
+
+### B. Perilaku Penting
+1. **Rantai model (auto-fallback):** model aktif dicoba lebih dulu, lalu daftar model cadangan (`kr/claude-sonnet-4.5`, `kr/claude-haiku-4.5`, `oc/gpt-5`, `glm/glm-4.6`). Server yang menolak model (HTTP 404 atau pesan berisi "model") dilewati otomatis.
+2. **API Key opsional untuk 9Router:** bila Base URL **bukan** Groq Cloud, analisis tetap boleh jalan tanpa API Key (header `Authorization` tidak dikirim). Penekanan "key wajib" hanya muncul bila Base URL mengarah ke `groq.com`.
+3. **Alamat default = IP LAN PC** (`http://192.168.18.70:20128/v1`) karena `localhost` di HP menunjuk ke HP itu sendiri. Emulator Android memakai alias host `10.0.2.2`. Alamat bisa dikoreksi dari HP tanpa build ulang.
+4. **Server 9Router harus dibuka ke LAN** bila ingin diakses dari HP: jalankan dengan `HOSTNAME=0.0.0.0`; kalau tidak, hanya bisa diakses dari PC itu sendiri.
+5. **Kompatibilitas setelan lama:** API Key yang tersimpan pada kunci lama `groq_api_key` tetap dibaca sebagai nilai awal, jadi pengguna lama tidak perlu mengisi ulang.
+
+### C. Status
+* ✅ APK debug berhasil di-build setelah migrasi (kompilasi Kotlin & resource tervalidasi).
+* ✅ Referensi lama (`GroqAiRepository`, `GroqAnalysisMode`) sudah bersih; ID XML lama (`tvGroqSummary`, `btnAskGroq`, dst.) sengaja dipertahankan agar layout tidak perlu diubah.
+* ⏳ Belum diuji live terhadap 9Router yang benar-benar berjalan — perlu uji koneksi dari HP ke PC.
+
+---
+
 *Dokumen ini diperbarui secara berkala dan mencakup seluruh perkembangan arsitektur dan strategi scalping.*
