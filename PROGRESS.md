@@ -266,6 +266,36 @@ Sempat dilaporkan tab Screener terasa lama memuat. Setelah diukur langsung ke Tr
 
 > Catatan: memotong jumlah candle **tidak** dipakai sebagai solusi, karena candle harian 3 bulan hanya ~4,5 KB / 66 candle — sangat ringan. Yang berpengaruh adalah jumlah *request*, bukan besar datanya.
 
+### E4. Perbaikan Anchor Fibonacci: Pivot ZigZag (high terbaru ikut terbaca)
+
+**Masalah yang dilaporkan:** kedua tarikan masih mengambil acuan high lama. Contoh: harga hari ini naik ke **150**, tetapi tarikan tetap ditarik ke high sebelumnya di **136** — sehingga zona beli (tarikan 1) dan target jual (tarikan 2) sama-sama tertinggal. Titik *low* sudah benar; hanya titik *high* yang salah baca.
+
+**Akar masalah:** `findSwings` mensyaratkan sebuah candle puncak **lebih tinggi dari candle di kanannya**. Akibatnya puncak **terbaru** (high hari ini) belum pernah dianggap swing selama harga belum turun. Fibonacci pun mengunci high lama yang sudah "terkonfirmasi".
+
+**Perbaikan:** anchor high kini diambil dari **pivot ZigZag** (`findZigZagPivots`) — titik balik yang sudah terkonfirmasi berbalik ≥ ambang, **ditambah** satu titik ekstrem yang masih berjalan di ujung kanan (mis. high hari ini). Titik *low* sengaja **tetap** memakai deteksi swing karena sudah terbukti akurat.
+
+| Aspek | Sebelum | Sesudah |
+| :--- | :--- | :--- |
+| Sumber high premier | Swing high (butuh candle kanan lebih rendah) | Pivot ZigZag + ekstrem berjalan |
+| High hari ini (150) | Tidak terbaca, tertinggal di 136 | Langsung terbaca |
+| Zona jual saat high berjalan | Kosong (tidak ada koreksi sesudah high) | Diukur dari dasar leg berjalan |
+| Sumber low premier | Swing low | **Tetap** swing low (tidak diubah) |
+
+**Ambang ZigZag** = `1,5 × rata-rata rentang candle (high−low)`, dibatasi **0,6%–3,0%**. Rentang candle dipakai (bukan gerak close-ke-close) supaya noise intrabar kecil tidak memecah satu ayunan menjadi banyak pivot palsu.
+
+**Zona jual (tarikan 2) saat high masih berjalan:** bila koreksi setelah high **belum** terjadi, zona jual diukur dari **dasar leg berjalan** (pivot low terakhir sebelum high) — sehingga target profit ikut terangkat bersama high baru, bukan hilang/tertinggal.
+
+**Uji data nyata (1D/3mo, jendela 100 candle) — zona beli kini jatuh di sekitar harga terkini:**
+
+| Emiten | Close | Zona Beli SEBELUM | Zona Beli SESUDAH |
+| :--- | :-: | :--- | :--- |
+| TLKM | 2260 | 2609–2630 ❌ (di atas harga) | **2253–2270** ✅ |
+| SMRA | 236 | 304–312 ❌ | **237–238** ✅ |
+| BBRI | 3030 | 3036–3075 | **3013–3045** ✅ |
+| GOTO | 30 | `NONE` ❌ | **28–29** ✅ |
+
+**Uji skenario sintetis (high lama 136 → high hari ini 150):** tarikan 1 naik dari high 133 ke **150**, zona beli 112–116 → **118–125**, dan zona jual tetap ada (140–142) ✅.
+
 ### F. Preset Penyaringan (Berbeda per Gaya)
 
 Preset dibangun ulang saat chip **Gaya** diganti, jadi kandidat yang disaring sejak awal memang cocok dengan gaya yang dipilih.

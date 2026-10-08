@@ -368,6 +368,104 @@ object SmartMoneyAnalyzer {
     }
 
     // ============================================================
+    // PIVOT ZIGZAG (acuan HIGHT tarikan Fibonacci)
+    // ============================================================
+
+    /**
+     * Mencari titik balik (pivot) bergaya **ZigZag**: puncak/lembah yang sudah TERKONFIRMASI
+     * berbalik minimal sejauh [thresholdPercent], DITAMBAH satu titik ekstrem yang masih
+     * berjalan di ujung kanan.
+     *
+     * Kenapa tidak cukup [findSwings]? Fungsi itu menuntut candle puncak lebih tinggi dari
+     * candle di KANANNYA, sehingga puncak TERBARU (mis. high hari ini) selalu belum terdeteksi
+     * selama harga belum turun. Akibatnya Fibonacci sempat mengunci high lama (mis. 136)
+     * padahal harga sudah mencetak high baru (mis. 150), sehingga ZONA BELI (tarikan 1) dan
+     * ZONA JUAL (tarikan 2) sama-sama tertinggal. ZigZag di sini selalu memasukkan ekstrem
+     * yang sedang berjalan hingga candle terakhir, jadi kedua tarikan otomatis terangkat
+     * begitu harga membuat high/lembah baru.
+     */
+    fun findZigZagPivots(candles: List<Candle>, thresholdPercent: Double): List<SwingPoint> {
+        if (candles.size < 2) return emptyList()
+        val th = thresholdPercent.coerceAtLeast(0.01)
+        val out = mutableListOf<SwingPoint>()
+
+        var dir = 0            // 0 = belum ada arah, 1 = leg naik, -1 = leg turun
+        var maxIdx = 0
+        var maxPrice = candles[0].high
+        var minIdx = 0
+        var minPrice = candles[0].low
+
+        for (k in 1 until candles.size) {
+            val h = candles[k].high
+            val l = candles[k].low
+            if (h > maxPrice) { maxPrice = h; maxIdx = k }
+            if (l < minPrice) { minPrice = l; minIdx = k }
+
+            val dropFromMax = if (maxPrice > 0.0) (maxPrice - l) / maxPrice * 100.0 else 0.0
+            val riseFromMin = if (minPrice > 0.0) (h - minPrice) / minPrice * 100.0 else 0.0
+
+            when (dir) {
+                0 -> {
+                    // Belum ada arah: tentukan dari gerakan pertama yang melewati ambang.
+                    if (riseFromMin >= th && minIdx < maxIdx) {
+                        out.add(SwingPoint(minIdx, minPrice, false))
+                        dir = 1
+                        maxIdx = k; maxPrice = h
+                    } else if (dropFromMax >= th && maxIdx < minIdx) {
+                        out.add(SwingPoint(maxIdx, maxPrice, true))
+                        dir = -1
+                        minIdx = k; minPrice = l
+                    }
+                }
+                1 -> {
+                    if (dropFromMax >= th) {
+                        out.add(SwingPoint(maxIdx, maxPrice, true))
+                        dir = -1
+                        minIdx = k; minPrice = l
+                    }
+                }
+                else -> {
+                    if (riseFromMin >= th) {
+                        out.add(SwingPoint(minIdx, minPrice, false))
+                        dir = 1
+                        maxIdx = k; maxPrice = h
+                    }
+                }
+            }
+        }
+
+        // Titik ekstrem yang MASIH BERJALAN di ujung kanan (mis. high hari ini) — inilah
+        // kunci agar tarikan tidak tertinggal dari harga terbaru.
+        val lastIdx = out.lastOrNull()?.index
+        when (dir) {
+            1 -> if (maxIdx != lastIdx) out.add(SwingPoint(maxIdx, maxPrice, true))
+            -1 -> if (minIdx != lastIdx) out.add(SwingPoint(minIdx, minPrice, false))
+            else -> if (out.isEmpty()) {
+                if (maxIdx >= minIdx) out.add(SwingPoint(maxIdx, maxPrice, true))
+                else out.add(SwingPoint(minIdx, minPrice, false))
+            }
+        }
+        return out.sortedBy { it.index }
+    }
+
+    /**
+     * Ambang pembalikan ZigZag = 1,5x rata-rata rentang candle (high-low), dibatasi 0,6%-3,0%.
+     * Rentang candle (bukan gerak close-ke-close) dipakai supaya noise intrabar kecil tidak
+     * memecah satu ayunan menjadi banyak pivot palsu.
+     */
+    private fun zigZagReversalThreshold(window: List<Candle>): Double {
+        var sum = 0.0
+        var count = 0
+        for (c in window) {
+            if (c.low <= 0.0) continue
+            sum += (c.high - c.low) / c.low * 100.0
+            count++
+        }
+        if (count == 0) return 1.0
+        return ((sum / count) * 1.5).coerceIn(0.6, 3.0)
+    }
+
+    // ============================================================
     // FIBONACCI
     // ============================================================
 
@@ -388,6 +486,12 @@ object SmartMoneyAnalyzer {
      * Menghitung Fibonacci DUA TARIKAN dari candle.
      *
      * Tarikan pertama dipakai untuk mencari area beli, tarikan kedua untuk area jual.
+     *
+     * Penting: high premier diambil dari pivot **ZigZag** ([findZigZagPivots]) agar high
+     * TERBARU — termasuk yang masih berjalan di candle terakhir — langsung dipakai. Dengan
+     * begitu kedua tarikan tidak lagi tertinggal di high lama saat harga mencetak rekor baru
+     * hari ini. Titik low tetap memakai deteksi swing karena sudah terbukti akurat.
+     *
      * Bila pola premier belum terbentuk, hasilnya berstatus [FibSetupState.NONE]
      * dan skor Fibonacci tidak diberikan.
      */
@@ -395,16 +499,20 @@ object SmartMoneyAnalyzer {
         val window = candles.takeLast(windowSize)
         if (window.size < 10) return emptyFib(window)
 
-        val swings = findSwingsAdaptive(window, 3)
-        val highs = swings.filter { it.isHigh }
-        val lows = swings.filter { !it.isHigh }
-        if (highs.isEmpty() || lows.isEmpty()) return emptyFib(window)
-
         val close = window.last().close
         if (close <= 0.0) return emptyFib(window)
 
+        // HIGH dari pivot ZigZag supaya high TERBARU (mis. high hari ini) ikut terbaca,
+        // bukan hanya high lama yang sudah "terkonfirmasi" turun. LOW tetap dari deteksi
+        // swing seperti semula karena titik bawah sudah terbukti benar.
+        val swingLows = findSwingsAdaptive(window, 3).filter { !it.isHigh }
+        val zigzagPivots = findZigZagPivots(window, zigZagReversalThreshold(window))
+        val zigzagHighs = zigzagPivots.filter { it.isHigh }
+        val zigzagLows = zigzagPivots.filter { !it.isHigh }
+        if (zigzagHighs.isEmpty() || swingLows.isEmpty()) return emptyFib(window)
+
         // --- 1 & 3: POLA PREMIER -> tarikan 1 (zona beli) ---
-        val premierPair = findPremierLeg(window, highs, lows) ?: return emptyFib(window)
+        val premierPair = findPremierLeg(window, zigzagHighs, swingLows) ?: return emptyFib(window)
         val premierLeg = makeLeg(
             FibKind.PREMIER,
             window[premierPair.first].low,
@@ -413,11 +521,21 @@ object SmartMoneyAnalyzer {
         )
 
         // --- 2 & 5: POLA SEKUNDER -> tarikan 2 (zona jual) ---
-        // Low sekunder = titik terendah setelah high premier, yaitu awal koreksi.
+        // Low sekunder = titik koreksi setelah high premier. Bila koreksinya SUDAH terjadi,
+        // dipakai titik terendah sesudah high (perilaku lama). Bila high premier masih
+        // BERJALAN (mis. high hari ini, belum ada koreksi sesudahnya), zona jual diukur dari
+        // DASAR leg berjalan — pivot low terakhir SEBELUM high — supaya target profit ikut
+        // terangkat bersama high baru, bukan tertinggal di high lama.
         val afterHigh = window.drop(premierPair.second + 1)
-        val secondaryLeg = afterHigh
-            .minByOrNull { it.low }
-            ?.let { makeLeg(FibKind.SECONDARY, premierLeg.endPrice, it.low, isUp = false) }
+        val hasCorrectionAfterHigh = zigzagLows.any { it.index > premierPair.second }
+        val sekunderLow: Double? = if (hasCorrectionAfterHigh) {
+            afterHigh.minOfOrNull { it.low }?.takeIf { it > 0.0 }
+        } else {
+            zigzagLows.lastOrNull { it.index < premierPair.second }?.price
+                ?: afterHigh.minOfOrNull { it.low }?.takeIf { it > 0.0 }
+        }
+        val secondaryLeg = sekunderLow
+            ?.let { makeLeg(FibKind.SECONDARY, premierLeg.endPrice, it, isUp = false) }
 
         // --- 4: konfirmasi area beli ---
         val entryHigh = premierLeg.level05    // batas atas zona beli
@@ -484,8 +602,11 @@ object SmartMoneyAnalyzer {
     }
 
     /**
-     * Mencari pola premier: pasangan (indeks swing low, indeks swing high) terakhir
-     * dengan low SEBELUM high dan kenaikan yang cukup signifikan.
+     * Mencari pola premier: pasangan (indeks titik terendah, indeks high) terakhir dengan
+     * titik terendah SEBELUM high dan kenaikan yang cukup signifikan.
+     *
+     * [highs] sebaiknya berasal dari pivot ZigZag ([findZigZagPivots]) agar high terbaru/hari
+     * ini ikut dipertimbangkan; [lows] tetap dari deteksi swing.
      *
      * Ambang "signifikan" memakai ambang adaptif yang sama seperti Order Block,
      * supaya definisi kenaikan penting tetap menyesuaikan volatilitas saham.
