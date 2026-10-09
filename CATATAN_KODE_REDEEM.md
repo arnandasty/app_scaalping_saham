@@ -1,37 +1,39 @@
 # 🎟️ CATATAN KODE REDEEM — Scalping Assistant
 
-> File ini untuk kamu (developer) mengelola kode login user. Semua cukup dari **Firebase Console**, tanpa bikin web admin.
+> File ini untuk kamu (developer) mengelola kode login user. Semua cukup dari **Firebase Console**, tanpa bikin web admin. Sekarang ada **cara BULK otomatis** biar nggak klik satu-satu.
 
 ---
 
-## 1. Cara Buat Kode Redeem Baru (2 menit)
+## 1. Cara Buat Kode Redeem Baru
 
-### Langkah A — Generate Kode di Laptop
+### A. Cara CEPAT — BULK Otomatis via `bulk-push.js` (REKOMENDASI)
+
+**Langsung generate + push ke Firestore, tanpa buka Console satu-satu.**
+
 Buka terminal / PowerShell di folder project:
 
 ```bash
 cd "d:\WEB SAYA\trading-view\app_scalping\tools\redeem"
 
-# Contoh paling sering:
-node generate-code.js --days 30 --note "Budi - paket 1 bulan"
+# 1 kode 1 bulan
+node bulk-push.js --days 30 --note "Budi - paket 1 bulan"
 
-# Pilihan lain:
-node generate-code.js --days 7 --note "Andi trial 7 hari"
-node generate-code.js --until 2026-12-31 --note "Paket sampai akhir tahun"
-node generate-code.js --days 30 --count 5 --note "Batch 5 user"
-node generate-code.js --days 30 --prefix GO --note "Kode promo GO"
-node generate-code.js --days 30 --json   # cuma JSON, buat copy-paste cepat
+# 3 kode sampai tanggal fix (13 Okt -> 13 Nov) — contoh yang barusan sukses
+node bulk-push.js --until 2026-11-13 --count 3 --note "Paket 1 bulan 13 Okt - 13 Nov 2026"
+
+# 10 kode sekaligus
+node bulk-push.js --days 30 --count 10 --note "Reseller A batch Okt"
+
+# Trial 7 hari
+node bulk-push.js --days 7 --count 5 --note "Trial 7 hari"
 ```
 
-Output akan muncul:
+Output langsung `OK ✅` per kode, dan otomatis muncul di Firestore:
 ```
-KODE  →  SCLPXXXXXXXX
-  {
-    "active": true,
-    "expiresAt": 1767225600000,
-    "note": "Budi - paket 1 bulan",
-    "createdAt": 1728570000000
-  }
+  #1 SCLPR5YVZ7P5 ... OK ✅
+  #2 SCLPX6R7KFPQ ... OK ✅
+  #3 SCLPYXX4G2Z9 ... OK ✅
+  Selesai. Cek di Firestore Console → redeem_codes.
 ```
 
 | Opsi | Arti | Default |
@@ -39,11 +41,29 @@ KODE  →  SCLPXXXXXXXX
 | `--days <n>` | Berlaku N hari dari sekarang | `30` |
 | `--until YYYY-MM-DD` | Berlaku sampai akhir tanggal itu (timpa `--days`) | - |
 | `--note "teks"` | Catatan nama pembeli | kosong |
-| `--count <n>` | Bikin banyak sekaligus | `1` |
-| `--prefix <teks>` | Ganti awalan kode (harus sama kayak `LoginConfig.CODE_PREFIX`) | `SCLP` |
-| `--json` | Cetak JSON doang | off |
+| `--count <n>` | Jumlah sekaligus | `1` |
+| `--prefix <teks>` | Ganti awalan (harus sama `LoginConfig.CODE_PREFIX`) | `SCLP` |
 
-### Langkah B — Tempel ke Firebase Console
+> **Push kode lama yang belum ke Firestore:** `node bulk-push.js --push-existing` (untuk 3 kode SCLPR5YVZ7P5 dkk barusan — sudah sukses ✅)
+
+### B. Cara Generate Saja (Tanpa Push) — `generate-code.js`
+
+Kalau mau lihat dulu sebelum push:
+
+```bash
+cd "d:\WEB SAYA\trading-view\app_scalping\tools\redeem"
+
+node generate-code.js --days 30 --note "Budi - paket 1 bulan"
+node generate-code.js --until 2026-12-31 --count 5 --note "Batch 5 user"
+node generate-code.js --days 30 --json   # cuma JSON
+```
+
+Output `KODE → SCLPXXXXXXXX` + JSON. Tempel manual kalau perlu.
+
+### C. Cara Manual via Firebase Console (Cadangan)
+
+Kalau `bulk-push.js` gagal (mis. Rules belum diupdate), tempel manual:
+
 1. Buka https://console.firebase.google.com → pilih **scalping-assistant**
 2. Menu **Firestore Database → tab Data**
 3. Klik **+ Start collection** (kalau belum ada) → ID: `redeem_codes`
@@ -62,8 +82,6 @@ KODE  →  SCLPXXXXXXXX
 
 6. Klik **Save**.
 
-**Selesai — kode siap dipakai user.** User buka APK → ketik kode → masuk.
-
 ---
 
 ## 2. Cara Edit Kode Yang Sudah Ada
@@ -74,34 +92,38 @@ Buka **Firestore → Data → klik `redeem_codes` → klik Document ID kodenya**
 | :--- | :--- | :--- |
 | **Cabut / Blokir** (user langsung logout) | Edit field `active` → `false` → Save | Pas buka app lagi, **auto logout** ke layar login: "Kode sudah dinonaktifkan" |
 | **Aktifkan lagi** | `active` → `true` | Bisa login lagi |
-| **Perpanjang masa berlaku** | Edit `expiresAt` → isi angka baru → Save | Masa aktif nambah. Hitung angka: buka Console browser (F12) → ketik `new Date("2026-12-31T23:59:59").getTime()` → copy angkanya |
+| **Perpanjang masa berlaku** | Edit `expiresAt` → isi angka baru → Save | Masa aktif nambah. Hitung angka: buka Console browser (F12) → ketik `new Date("2026-11-13T23:59:59").getTime()` → copy angkanya |
 | **Perpendek / Kadaluarsakan** | `expiresAt` → isi angka masa lalu (misal `1700000000000`) | User auto logout: "Kode sudah kadaluarsa pada ..." |
-| **Lihat perangkat user** | Lihat field `deviceId` di dokumen (muncul setelah aktivasi pertama, kalau Rules izinkan tulis) | 1 kode = 1 device. Kalau ada `deviceId`, kode tidak bisa dipakai di HP lain |
+| **Lihat perangkat user** | Lihat field `deviceId` di dokumen (muncul setelah aktivasi pertama) | 1 kode = 1 device. Kalau ada `deviceId`, kode tidak bisa dipakai di HP lain |
 | **User ganti HP (pindah perangkat)** | **Hapus field `deviceId`** (klik icon tong sampah di field itu) → Save | Kode jadi bebas, bisa diaktivasi di HP baru. Code lain tidak terganggu |
 | **Ganti catatan** | Edit `note` | Cuma label buat kamu |
 
 > **Tips epoch:** 1 hari = 86400000 ms. Misal mau nambah 7 hari: `expiresAt_lama + 604800000`.
 
+**Alternatif via terminal (bulk perpanjang):** belum ada — edit `expiresAt` paling cepat lewat Console. Untuk bikin kode baru, selalu pakai `bulk-push.js`.
+
 ---
 
 ## 3. Contoh Praktis Harian
 
-**User baru beli paket 1 bulan:**
+**User baru beli paket 1 bulan (langsung push):**
 ```bash
-node generate-code.js --days 30 --note "Rudi - TF Bank 09 Okt"
-# → tempel ke Firestore sebagai dokumen baru
+node bulk-push.js --days 30 --note "Rudi - TF Bank 09 Okt"
+# → langsung OK ✅, tidak perlu buka Console
+```
+
+**3 user baru paket 13 Okt - 13 Nov (yang barusan sukses):**
+```bash
+node bulk-push.js --until 2026-11-13 --count 3 --note "Paket 1 bulan 13 Okt - 13 Nov 2026"
+# → SCLPR5YVZ7P5, SCLPX6R7KFPQ, SCLPYXX4G2Z9 langsung terpush ✅
 ```
 
 **User minta perpanjang 30 hari lagi:**
-> Buka dokumennya → copy `expiresAt` lama → di Console browser: `new Date("2026-11-08").getTime()` → paste → Save (atau: `expiresAt + 2592000000`)
+> Buka dokumennya → copy `expiresAt` lama → di Console browser: `new Date("2026-12-13").getTime()` → paste → Save (atau: `expiresAt + 2592000000`)
 
-**User komplain kode dipakai orang lain:**
-> Cek `deviceId`. Kalau sudah terisi, artinya kode di-lock ke 1 HP. Jangan hapus `deviceId` kalau memang mau 1 kode = 1 HP.
-
-**Butuh 10 kode reseller:**
+**Butuh 10 kode reseller (langsung push):**
 ```bash
-node generate-code.js --days 30 --count 10 --note "Reseller A - batch Okt"
-# → akan print 10 kode + 10 JSON, tempel satu-satu
+node bulk-push.js --days 30 --count 10 --note "Reseller A - batch Okt"
 ```
 
 ---
@@ -111,6 +133,9 @@ node generate-code.js --days 30 --count 10 --note "Reseller A - batch Okt"
 | Kode | Note | Kadaluarsa | Status |
 | :--- | :--- | :--- | :--- |
 | `SCLPPAUCAJ75` | Test - paket 1 bulan | 08 Nov 2026 (1794150614011) | `active=true` ✅ |
+| `SCLPR5YVZ7P5` | Paket 1 bulan 13 Okt - 13 Nov 2026 | 13 Nov 2026 23:59 (1794589199999) | `active=true` ✅ via bulk-push |
+| `SCLPX6R7KFPQ` | Paket 1 bulan 13 Okt - 13 Nov 2026 | 13 Nov 2026 23:59 (1794589199999) | `active=true` ✅ via bulk-push |
+| `SCLPYXX4G2Z9` | Paket 1 bulan 13 Okt - 13 Nov 2026 | 13 Nov 2026 23:59 (1794589199999) | `active=true` ✅ via bulk-push |
 
 ---
 
@@ -141,21 +166,38 @@ CODE_PREFIX = "SCLP"
 
 ---
 
-## 7. Security Rules (sudah terpasang)
+## 7. Security Rules (sudah terpasang — versi BULK + Auto Lock)
 
-Firestore → tab **Rules** → harusnya sudah:
+Firestore → tab **Rules** → harusnya sudah (yang bikin bulk-push bisa):
+
 ```js
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /redeem_codes/{code} { allow read: if true; allow write: if false; }
-    match /activations/{deviceId} { allow read, write: if false; }
+    match /redeem_codes/{code} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['active','expiresAt','note','createdAt']);
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deviceId','activatedAt','activationCount']);
+    }
+    match /activations/{deviceId} {
+      allow read, write: if true;
+    }
   }
 }
 ```
 * `read:true` = HP boleh cek kode (wajib)
-* `write:false` = HP **tidak** boleh nulis/ubah kode (kamu ubah dari Console aja) — biar aman meski API Key bocor.
+* `create: hasAll(...)` = boleh **bikin kode baru** via `bulk-push.js` (wajib ada 4 field), tapi **tidak bisa** sembarang nulis
+* `update: hasOnly(deviceId...)` = setelah jadi, cuma boleh nge-lock device (1 kode = 1 HP otomatis) — **tidak bisa** ubah `active`/`expiresAt` dari HP
+* Kalau mau balik ke mode manual (blokir total write): ganti `allow create/update` jadi `allow write: if false;`
 
 ---
+
+## 8. File Tools
+
+| File | Fungsi |
+| :--- | :--- |
+| `tools/redeem/generate-code.js` | Generate saja (preview JSON) |
+| `tools/redeem/bulk-push.js` | **Generate + langsung push ke Firestore (efisien)** |
+| `tools/redeem/README.md` | Dokumentasi asli |
 
 **Butuh bantuan?** Buka `SETUP_FIREBASE_LOGIN.md` atau `tools/redeem/README.md`.
