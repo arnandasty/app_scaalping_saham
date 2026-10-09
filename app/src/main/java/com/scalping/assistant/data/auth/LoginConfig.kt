@@ -22,13 +22,13 @@ package com.scalping.assistant.data.auth
 object LoginConfig {
 
     /** Project ID Firebase, mis. `scalping-assistant-a1b2c`. */
-    const val PROJECT_ID = ""
+    const val PROJECT_ID = "scalping-assistant"
 
     /** App ID Firebase, mis. `1:1234567890:android:1a2b3c4d5e6f7g8h`. */
-    const val APPLICATION_ID = ""
+    const val APPLICATION_ID = "1:122081106113:android:ad3812dcb92e4c581fc40"
 
     /** Web API Key dari SDK setup Firebase. */
-    const val API_KEY = ""
+    const val API_KEY = "AIzaSyBU7LXc9m_s4fjKg97tEt1Fd_D0KaNIK6Y"
 
     /** Nama koleksi Firestore yang menyimpan dokumen kode redeem (ID dokumen = kodenya). */
     const val COLLECTION_REDEEM_CODES = "redeem_codes"
