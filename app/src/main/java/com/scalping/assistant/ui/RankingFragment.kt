@@ -25,11 +25,16 @@ class RankingFragment : Fragment() {
         rvStockRanking = view.findViewById(R.id.rvStockRanking)
         layoutEmptyState = view.findViewById(R.id.layoutEmptyState)
         
-        rankingAdapter = RankingAdapter { analysis ->
-            (activity as? com.scalping.assistant.MainActivity)?.requestBandarDetector(analysis.ticker)
-            val bottomSheet = DetailBottomSheet(analysis)
-            bottomSheet.show(childFragmentManager, "DetailBottomSheet")
-        }
+        val main = activity as? com.scalping.assistant.MainActivity
+        rankingAdapter = RankingAdapter(
+            onItemClick = { analysis ->
+                main?.requestBandarDetector(analysis.ticker)
+                val bottomSheet = DetailBottomSheet(analysis)
+                bottomSheet.show(childFragmentManager, "DetailBottomSheet")
+            },
+            // Badge LIVE/DLY dibaca dari sumber candle aktual per ticker di pipeline.
+            candleSourceProvider = { ticker -> main?.orderBookRepo?.getCandleSource(ticker) ?: "YAHOO" }
+        )
         
         rvStockRanking.layoutManager = LinearLayoutManager(requireContext())
         rvStockRanking.adapter = rankingAdapter

@@ -6,26 +6,19 @@ import android.content.Context
  * Konfigurasi endpoint AI yang dipakai seluruh fitur opini AI
  * (Opini Scalper, Analisis Swing, dan Dokter Portfolio).
  *
- * Endpoint-nya OpenAI-compatible, jadi 9Router bisa dipakai apa adanya tanpa
- * perubahan format request. 9Router dijalankan di PC/Laptop (`npm install -g 9router`
- * lalu `9router`) dan membuka dashboard di `http://localhost:20128`.
+ * Default: TokenHarbor cloud (OpenAI-compatible) dengan model gratisan DeepSeek,
+ * jadi HP langsung tembak internet tanpa perlu 9Router di PC / satu Wi-Fi.
+ * API Key TokenHarbor (thk_live_...) wajib diisi lewat dialog ⚙️ API Key.
  *
- * PENTING soal alamat untuk HP:
- * - `localhost` di HP menunjuk ke HP itu sendiri, BUKAN ke PC. Karena itu alamat
- *   default di bawah memakai IP LAN PC. IP ini bisa berubah bila DHCP memberi alamat
- *   baru, jadi selalu bisa dikoreksi lewat dialog ⚙️ API Key tanpa build ulang.
- * - Emulator Android di PC yang sama harus memakai [EMULATOR_BASE_URL] (`10.0.2.2`),
- *   karena `10.0.2.2` adalah alias khusus emulator untuk mesin host.
- * - Bila 9Router dijalankan dengan Tunnel/Cloud Sync, ganti ke URL https yang
- *   diberikan 9Router (mis. `https://xxxx.trycloudflare.com/v1`).
- *
- * Server 9Router hanya mau menerima koneksi dari luar bila dijalankan dengan
- * `HOSTNAME=0.0.0.0`; kalau tidak, hanya bisa diakses dari PC itu sendiri.
+ * Alternatif tetap didukung lewat dialog yang sama tanpa build ulang:
+ * - 9Router lokal di PC (`http://IP-LAN-PC:20128/v1`, tanpa key bila tanpa auth).
+ * - Emulator Android di PC yang sama memakai `http://10.0.2.2:20128/v1`.
+ * - Groq Cloud (`https://api.groq.com/openai/v1`, wajib API Key Groq).
  */
 object AiConfig {
 
-    /** Base URL default: 9Router di PC, diakses dari HP lewat Wi-Fi yang sama. */
-    const val DEFAULT_BASE_URL = "http://192.168.18.70:20128/v1"
+    /** Base URL default: TokenHarbor cloud. */
+    const val DEFAULT_BASE_URL = "https://tokenharbor.ai/v1"
 
     /** Alias khusus emulator Android untuk mesin host (PC yang menjalankan 9Router). */
     const val EMULATOR_BASE_URL = "http://10.0.2.2:20128/v1"
@@ -34,18 +27,17 @@ object AiConfig {
     const val GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
     /**
-     * Model default. Prefix `kr/` = provider Kiro AI di 9Router (Claude 4.5 + GLM-5 +
-     * MiniMax, tier gratis). Nama model ditulis persis seperti yang terlihat di
-     * dashboard 9Router; ganti bila ingin model lain (mis. `or/...`, `glm/...`).
+     * Model default: DeepSeek gratisan di TokenHarbor (`:free` = rute gratis).
+     * Daftar model live ada di https://tokenharbor.ai/models.
      */
-    const val DEFAULT_MODEL = "kr/claude-sonnet-4.5"
+    const val DEFAULT_MODEL = "tokenharbor/deepseek-v4.1-flash:free"
 
     /** Model cadangan yang dicoba berurutan bila model utama ditolak server. */
     val FALLBACK_MODELS = listOf(
-        "kr/claude-sonnet-4.5",
-        "kr/claude-haiku-4.5",
-        "oc/gpt-5",
-        "glm/glm-4.6"
+        "tokenharbor/deepseek-v4.1-flash:free",
+        "deepseek-v4.1-flash:free",
+        "deepseek-v4.1-flash",
+        "kr/claude-haiku-4.5"
     )
 
     private const val PREFS = "ScalpingPrefs"
@@ -58,9 +50,22 @@ object AiConfig {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** Base URL aktif. Bila belum pernah diatur, memakai [DEFAULT_BASE_URL]. */
-    fun baseUrl(ctx: Context): String =
-        prefs(ctx).getString(KEY_BASE_URL, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL
+    /**
+     * Base URL aktif. Bila belum pernah diatur, memakai [DEFAULT_BASE_URL].
+     * Migrasi otomatis: pengguna lama yang masih menyimpan Base URL 9Router era
+     * sebelum TokenHarbor (IP LAN / localhost / 10.0.2.2 port 20128) langsung
+     * ikut pindah ke default TokenHarbor tanpa perlu hapus data aplikasi.
+     */
+    fun baseUrl(ctx: Context): String {
+        val saved = prefs(ctx).getString(KEY_BASE_URL, null)?.takeIf { it.isNotBlank() }
+            ?: return DEFAULT_BASE_URL
+        val low = saved.lowercase()
+        val isLegacy9Router = (low.contains(":20128") &&
+            (low.contains("192.168.") || low.contains("10.0.2.2") ||
+                low.contains("localhost") || low.contains("127.0.0.1"))) ||
+            saved == "http://192.168.18.70:20128/v1"
+        return if (isLegacy9Router) DEFAULT_BASE_URL else saved
+    }
 
     /**
      * API Key aktif.

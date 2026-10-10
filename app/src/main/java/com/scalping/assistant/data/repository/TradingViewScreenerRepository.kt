@@ -85,6 +85,16 @@ data class ScreenerStock(
     val macdHistogram: Double get() = macdMacd - macdSignal
 }
 
+/** Sumber candle yang dipakai untuk analisis mendalam satu emiten. */
+enum class CandleSource(val badge: String) {
+    /** Candle Stockbit 0-delay (login WebView aktif). */
+    STOCKBIT("🟢 LIVE"),
+    /** Candle Yahoo Finance (delay ±10 menit). */
+    YAHOO("🟡 DLY"),
+    /** Belum dianalisis candle (snapshot saja). */
+    NONE("⚪ SNAP")
+}
+
 /** Emiten + skornya. Skor inilah yang dipakai untuk mengurutkan. */
 data class ScoredScreenerStock(
     val stock: ScreenerStock,
@@ -94,7 +104,9 @@ data class ScoredScreenerStock(
      * Fibonacci, struktur HH/HL lengkap). false = baru snapshot, sehingga komponen
      * berbasis candle bernilai 0 dan skor maksimalnya hanya 70, bukan 100.
      */
-    val deepAnalyzed: Boolean = false
+    val deepAnalyzed: Boolean = false,
+    /** Dari mana candle deep-analysis berasal (untuk badge 🟢/🟡/⚪ di UI). */
+    val candleSource: CandleSource = CandleSource.NONE
 ) {
     val ticker: String get() = stock.ticker
 }
@@ -135,7 +147,8 @@ enum class ScreenerPreset(val label: String, val style: TradingStyle) {
 }
 
 class TradingViewScreenerRepository(
-    private val yahooRepo: YahooFinanceRepository? = null
+    private val yahooRepo: YahooFinanceRepository? = null,
+    private val stockbitRepo: StockbitCandleRepository? = null
 ) {
 
     private val cache = mutableMapOf<String, Pair<Long, List<ScoredScreenerStock>>>()
@@ -321,12 +334,31 @@ class TradingViewScreenerRepository(
         timeframe: CandleTimeframe,
         style: TradingStyle
     ): List<ScoredScreenerStock> {
-        val repo = yahooRepo ?: return items
+        val hasCandleSource = yahooRepo != null || stockbitRepo != null
+        if (!hasCandleSource) return items
         return coroutineScope {
             items.map { item ->
                 async {
                     try {
-                        val candles: List<Candle> = repo.fetchCandles(item.ticker, timeframe)
+                        // Catat sumber candle per emiten untuk badge 🟢/🟡 di UI:
+                        // coba Stockbit dulu (0-delay), gagal -> fallback Yahoo (delay).
+                        var candles: List<Candle> = emptyList()
+                        var source = CandleSource.NONE
+                        if (stockbitRepo != null && stockbitRepo.isStockbitLoggedIn()) {
+                            val sb = stockbitRepo.fetchCandles(item.ticker, timeframe)
+                            if (sb.size >= 10) {
+                                candles = sb
+                                // Sumber aktual (bisa fallback Yahoo bila endpoint fail meski login).
+                                source = if (stockbitRepo.getCandleSource(item.ticker, timeframe) == "STOCKBIT") CandleSource.STOCKBIT else CandleSource.YAHOO
+                            }
+                        }
+                        if (candles.size < 10 && yahooRepo != null) {
+                            val yh = yahooRepo.fetchCandles(item.ticker, timeframe)
+                            if (yh.size >= 10) {
+                                candles = yh
+                                source = CandleSource.YAHOO
+                            }
+                        }
                         if (candles.size < 10) {
                             item
                         } else {
@@ -339,7 +371,8 @@ class TradingViewScreenerRepository(
                                     timeframe,
                                     style
                                 ),
-                                deepAnalyzed = true
+                                deepAnalyzed = true,
+                                candleSource = source
                             )
                         }
                     } catch (e: Exception) {

@@ -232,8 +232,8 @@ class AiRepository {
     ): Result<String> = withContext(Dispatchers.IO) {
         var lastException: Exception? = null
 
-        // Endpoint & model dibaca dari Setelan, jadi berpindah antara 9Router (IP LAN,
-        // emulator, atau tunnel) dan Groq Cloud cukup lewat dialog ⚙️ API Key.
+        // Endpoint & model dibaca dari Setelan (default TokenHarbor cloud; alternatif
+        // 9Router lokal / emulator / tunnel / Groq Cloud cukup lewat dialog ⚙️ API Key).
         val endpoint = AiConfig.chatEndpoint(ctx)
         val models = modelsFor(ctx)
 
@@ -299,7 +299,7 @@ class AiRepository {
                         errorText
                     }
                     // Cuplikan body ikut ditampilkan (dipotong) supaya kegagalan koneksi
-                    // ke 9Router bisa didiagnosis dari HP tanpa perlu logcat.
+                    // ke AI bisa didiagnosis dari HP tanpa perlu logcat.
                     val detail = "$errorMsg".trim().take(180)
                     val salahModel = responseCode == 404 || detail.contains("model", ignoreCase = true)
 
@@ -319,7 +319,7 @@ class AiRepository {
 
         Result.failure(
             lastException ?: Exception(
-                "Gagal menghubungi AI di $endpoint. Periksa apakah 9Router sudah jalan dan alamatnya benar."
+                "Gagal menghubungi AI di $endpoint. Periksa API Key TokenHarbor & koneksi internet HP."
             )
         )
     }

@@ -4,21 +4,23 @@
     android:id="@+id/cardScreener"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginHorizontal="8dp"
-    android:layout_marginVertical="4dp"
+    android:layout_marginHorizontal="12dp"
+    android:layout_marginVertical="5dp"
     android:clickable="true"
     android:focusable="true"
-    app:cardBackgroundColor="@color/bg_card"
-    app:cardCornerRadius="10dp"
-    app:cardElevation="2dp">
+    android:foreground="?attr/selectableItemBackground"
+    app:cardBackgroundColor="@android:color/transparent"
+    app:cardCornerRadius="14dp"
+    app:cardElevation="0dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:background="@drawable/bg_screener_card"
         android:orientation="vertical"
-        android:padding="12dp">
+        android:padding="14dp">
 
-        <!-- Baris 1: Peringkat, Ticker, Rating -->
+        <!-- Baris 1: peringkat, ticker + nama perusahaan, skor -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -29,62 +31,81 @@
                 android:id="@+id/tvScreenerRank"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:minWidth="28dp"
                 android:text="#1"
                 android:textColor="@color/text_muted"
-                android:textSize="14sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/tvScreenerTicker"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
                 android:layout_weight="1"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:text="BBCA"
-                android:textColor="@color/text_primary"
-                android:textSize="17sp"
-                android:textStyle="bold" />
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvScreenerTicker"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="BBCA"
+                    android:textColor="@color/text_primary"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvScreenerCompany"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="Bank Central Asia · Finance"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tvScreenerRating"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="10dp"
                 android:background="@drawable/bg_score_yellow"
-                android:paddingHorizontal="6dp"
-                android:paddingVertical="2dp"
-                android:text="NETRAL"
+                android:gravity="center"
+                android:minWidth="52dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="6dp"
+                android:text="58"
                 android:textColor="@color/signal_yellow"
-                android:textSize="11sp"
+                android:textSize="20sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- Baris 2: Harga, Perubahan, Volume -->
+        <!-- Baris 2: harga, perubahan, volume -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_chip"
-            android:orientation="horizontal"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="6dp">
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <TextView
                 android:id="@+id/tvScreenerPrice"
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
                 android:text="Rp 9.450"
                 android:textColor="@color/text_primary"
-                android:textSize="12sp" />
+                android:textSize="16sp"
+                android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/tvScreenerChange"
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_pill_green"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="2dp"
                 android:text="+2.15%"
                 android:textColor="@color/signal_green"
                 android:textSize="12sp"
@@ -95,78 +116,112 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Vol: 12.4M"
+                android:gravity="end"
+                android:text="Vol 12.4M"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- Baris 3: Chip indikator -->
+        <!-- Baris 3: chip indikator -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="10dp"
             android:orientation="horizontal">
 
             <TextView
                 android:id="@+id/chipScreenerRvol"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/bg_chip"
-                android:paddingHorizontal="6dp"
-                android:paddingVertical="2dp"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
                 android:text="RVOL 2.0x"
                 android:textColor="@color/text_secondary"
-                android:textSize="10sp" />
+                android:textSize="11sp" />
 
             <TextView
                 android:id="@+id/chipScreenerRsi"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:background="@drawable/bg_chip"
-                android:paddingHorizontal="6dp"
-                android:paddingVertical="2dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
                 android:text="RSI 55"
                 android:textColor="@color/text_secondary"
-                android:textSize="10sp" />
+                android:textSize="11sp" />
 
             <TextView
                 android:id="@+id/chipScreenerTrend"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:background="@drawable/bg_chip"
-                android:paddingHorizontal="6dp"
-                android:paddingVertical="2dp"
-                android:text="ST 🟢"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:text="ST naik"
                 android:textColor="@color/text_secondary"
-                android:textSize="10sp" />
+                android:textSize="11sp" />
 
             <TextView
                 android:id="@+id/chipScreenerEma"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:background="@drawable/bg_chip"
-                android:paddingHorizontal="6dp"
-                android:paddingVertical="2dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
                 android:text="EMA"
                 android:textColor="@color/text_secondary"
-                android:textSize="10sp" />
+                android:textSize="11sp" />
         </LinearLayout>
 
-        <!-- Baris 4: Nama perusahaan + sektor + Fibonacci + gaya & catatan skor -->
+        <!-- Baris 4: zona Fibonacci (info paling actionable, jadi diberi strip sendiri) -->
         <TextView
-            android:id="@+id/tvScreenerSector"
+            android:id="@+id/tvScreenerFib"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:ellipsize="end"
-            android:maxLines="2"
-            android:text="Finance · data TradingView (delay 10 mnt)"
-            android:textColor="@color/text_secondary"
-            android:textSize="11sp"
-            android:textStyle="italic" />
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_fib_strip"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="7dp"
+            android:text="Zona beli 9.450-9.300"
+            android:textColor="@color/brand_accent"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- Baris 5: sumber candle + gaya, kedalaman analisis, alasan skor -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvScreenerSource"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_tag"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:text="SNAP"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvScreenerSector"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:text="Swing · SMC 1D · data TradingView (delay 10 mnt)"
+                android:textColor="@color/text_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
     </LinearLayout>
 
 </androidx.cardview.widget.CardView>

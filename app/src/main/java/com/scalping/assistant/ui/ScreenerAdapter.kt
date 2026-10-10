@@ -55,17 +55,37 @@ class ScreenerAdapter(
         private val chipRsi: TextView = itemView.findViewById(R.id.chipScreenerRsi)
         private val chipTrend: TextView = itemView.findViewById(R.id.chipScreenerTrend)
         private val chipEma: TextView = itemView.findViewById(R.id.chipScreenerEma)
+        private val tvSource: TextView = itemView.findViewById(R.id.tvScreenerSource)
         private val tvSector: TextView = itemView.findViewById(R.id.tvScreenerSector)
+        private val tvCompany: TextView = itemView.findViewById(R.id.tvScreenerCompany)
+        private val tvFib: TextView = itemView.findViewById(R.id.tvScreenerFib)
 
         fun bind(item: ScoredScreenerStock, rank: Int) {
             val stock = item.stock
             val score = item.score
 
+            // Badge sumber candle: LIVE = Stockbit 0-delay, DLY = Yahoo delay,
+            // SNAP = snapshot saja (belum analisis candle). Warna titik menandai status.
+            tvSource.text = when (item.candleSource) {
+                com.scalping.assistant.data.repository.CandleSource.STOCKBIT -> "● LIVE"
+                com.scalping.assistant.data.repository.CandleSource.YAHOO -> "● DLY"
+                else -> "● SNAP"
+            }
+            tvSource.setTextColor(
+                Color.parseColor(
+                    when (item.candleSource) {
+                        com.scalping.assistant.data.repository.CandleSource.STOCKBIT -> "#10B981"
+                        com.scalping.assistant.data.repository.CandleSource.YAHOO -> "#F59E0B"
+                        else -> "#94A3B8"
+                    }
+                )
+            )
+
             tvRank.text = "#$rank"
             tvTicker.text = stock.ticker
 
             // Badge skor: menampilkan skor + grade singkat.
-            tvRating.text = "${score.gradeEmoji} ${score.total}"
+            tvRating.text = "${score.total}"
             val scoreColor = when {
                 score.total >= 80 -> "#10B981"
                 score.total >= 65 -> "#34D399"
@@ -93,8 +113,15 @@ class ScreenerAdapter(
                     else -> Color.parseColor("#E2E8F0")
                 }
             )
+            tvChange.setBackgroundResource(
+                when {
+                    stock.changePercent > 0 -> R.drawable.bg_pill_green
+                    stock.changePercent < 0 -> R.drawable.bg_pill_red
+                    else -> R.drawable.bg_tag
+                }
+            )
 
-            tvVolume.text = "Vol: ${formatVolume(stock.volume)}"
+            tvVolume.text = "Vol ${formatVolume(stock.volume)}"
 
             chipRvol.text = "RVOL ${String.format("%.1f", stock.relativeVolume)}x"
             chipRvol.setTextColor(
@@ -121,7 +148,7 @@ class ScreenerAdapter(
                 chipTrend.text = label
                 chipTrend.setTextColor(Color.parseColor(color))
             } else {
-                chipTrend.text = if (stock.isSupertrendBullish) "ST 🟢" else "ST 🔴"
+                chipTrend.text = if (stock.isSupertrendBullish) "ST naik" else "ST turun"
                 chipTrend.setTextColor(
                     Color.parseColor(if (stock.isSupertrendBullish) "#10B981" else "#EF4444")
                 )
@@ -129,10 +156,10 @@ class ScreenerAdapter(
 
             // Chip EMA: menunjuk sinyal SMC bila ada, karena lebih informatif.
             if (score.hasBullishOrderBlock) {
-                chipEma.text = "OB bull ✅"
+                chipEma.text = "OB bull"
                 chipEma.setTextColor(Color.parseColor("#10B981"))
             } else if (stock.isBullishEmaStack) {
-                chipEma.text = "EMA9>21 ✅"
+                chipEma.text = "EMA9>21"
                 chipEma.setTextColor(Color.parseColor("#10B981"))
             } else {
                 chipEma.text = "EMA9<21"
@@ -144,24 +171,54 @@ class ScreenerAdapter(
             // sedangkan skor dengan analisis lengkap bisa mencapai 100.
             // Fibonacci DUA TARIKAN: tampilkan zona beli (tarikan premier) atau
             // zona jual (tarikan sekunder) sesuai status setup, bukan sekadar level terdekat.
-            val fibText = score.fibonacci?.let { fib ->
-                when (fib.state) {
-                    FibSetupState.VALID -> " · 🎯 Beli ${formatNumber(fib.entryHigh)}-${formatNumber(fib.entryLow)}"
-                    FibSetupState.WAITING -> " · ⏳ Tunggu koreksi 0,5"
-                    FibSetupState.IN_SELL -> if (fib.secondaryLegProvisional)
-                        " · 🎯 Target ${formatNumber(fib.sellHigh)}-${formatNumber(fib.sellLow)} (proyeksi)"
-                    else
-                        " · 🎯 Jual ${formatNumber(fib.sellHigh)}-${formatNumber(fib.sellLow)}"
-                    FibSetupState.OVERSHOOT -> " · ⚠️ Fib gugur (>0,618)"
-                    FibSetupState.NONE -> ""
+            // Zona Fibonacci tampil di strip sendiri (info paling actionable), warnanya
+            // mengikuti status setup; disembunyikan bila belum ada tarikan valid.
+            val fib = score.fibonacci
+            val fibText: String?
+            val fibColor: String
+            when (fib?.state) {
+                FibSetupState.VALID -> {
+                    fibText = "Zona beli ${formatNumber(fib.entryHigh)}-${formatNumber(fib.entryLow)}"
+                    fibColor = "#10B981"
                 }
-            } ?: ""
-            val depthTag = if (item.deepAnalyzed) " · 🧠 SMC ${score.timeframe.label}" else " · snapshot"
+                FibSetupState.WAITING -> {
+                    fibText = "Tunggu koreksi ke 0,5"
+                    fibColor = "#F59E0B"
+                }
+                FibSetupState.IN_SELL -> {
+                    fibText = if (fib.secondaryLegProvisional)
+                        "Target ${formatNumber(fib.sellHigh)}-${formatNumber(fib.sellLow)} (proyeksi)"
+                    else
+                        "Zona jual ${formatNumber(fib.sellHigh)}-${formatNumber(fib.sellLow)}"
+                    fibColor = "#38BDF8"
+                }
+                FibSetupState.OVERSHOOT -> {
+                    fibText = "Fib gugur (>0,618)"
+                    fibColor = "#EF4444"
+                }
+                else -> {
+                    fibText = null
+                    fibColor = "#94A3B8"
+                }
+            }
+            if (fibText != null) {
+                tvFib.text = "Fib · $fibText"
+                tvFib.setTextColor(Color.parseColor(fibColor))
+                tvFib.visibility = View.VISIBLE
+            } else {
+                tvFib.visibility = View.GONE
+            }
+
             // Nama perusahaan ditampilkan karena pengguna bisa menemukan emiten lewat
             // fitur pencarian ("Cari kode / nama saham") tanpa tahu kodenya lebih dulu.
             val company = stock.companyName.ifEmpty { stock.name }
             val sektor = stock.sector.ifEmpty { "—" }
-            tvSector.text = "$company · $sektor$fibText$depthTag · Gaya: ${score.style.label} · ${score.summary}"
+            tvCompany.text = "$company · $sektor"
+
+            // Penanda kedalaman analisis: skor snapshot maksimal 70 (komponen candle 0),
+            // sedangkan skor dengan analisis lengkap bisa mencapai 100.
+            val depthTag = if (item.deepAnalyzed) "SMC ${score.timeframe.label}" else "snapshot"
+            tvSector.text = "${score.style.label} · $depthTag · ${score.summary}"
 
             cardScreener.setOnClickListener { onItemClick(item) }
         }

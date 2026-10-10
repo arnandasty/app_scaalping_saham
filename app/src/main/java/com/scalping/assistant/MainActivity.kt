@@ -3,6 +3,7 @@ package com.scalping.assistant
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -81,6 +82,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var pagerAdapter: com.scalping.assistant.ui.RankingPagerAdapter
     lateinit var yahooRepo: YahooFinanceRepository
+    lateinit var stockbitCandleRepo: com.scalping.assistant.data.repository.StockbitCandleRepository
     lateinit var orderBookRepo: OrderBookRepository
 
     private val handler = Handler(Looper.getMainLooper())
@@ -102,10 +104,15 @@ class MainActivity : AppCompatActivity() {
     private val scrapingRunnable = object : Runnable {
         override fun run() {
             if (::webView.isInitialized) {
+                val curUrl = try { webView.url ?: "" } catch (e: Exception) { "" }
+                // Halaman chart/profile (/symbol/, /chart) JANGAN disuntik scraper orderbook:
+                // injector berat tiap 500ms bikin chart TradingView blank putih.
+                val isChartPage = curUrl.contains("/symbol", ignoreCase = true) ||
+                        curUrl.contains("/chart", ignoreCase = true)
                 if (streamProbeScript.isNotEmpty()) {
                     webView.evaluateJavascript(streamProbeScript, null)
                 }
-                if (injectorScript.isNotEmpty()) {
+                if (!isChartPage && injectorScript.isNotEmpty()) {
                     webView.evaluateJavascript(injectorScript, null)
                 }
             }
@@ -164,9 +171,23 @@ class MainActivity : AppCompatActivity() {
         setupDragHandle()
         observeData()
 
+        // STARTUP RINGAN: jangan load 3 WebView berat bersamaan (bikin freeze).
+        // WebView utama langsung; 2 scraper latar ditunda 8 & 14 detik.
         webView.loadUrl("https://stockbit.com/orderbook")
-        webViewMovers.loadUrl("https://stockbit.com/orderbook")
-        webViewStream.loadUrl("https://stockbit.com/orderbook") // Nanti JS stream_injector akan klik tombol stream
+        try { webViewMovers.onPause() } catch (_: Exception) {}
+        try { webViewStream.onPause() } catch (_: Exception) {}
+        handler.postDelayed({
+            try {
+                webViewMovers.onResume()
+                webViewMovers.loadUrl("https://stockbit.com/orderbook")
+            } catch (_: Exception) {}
+        }, 8000L)
+        handler.postDelayed({
+            try {
+                webViewStream.onResume()
+                webViewStream.loadUrl("https://stockbit.com/orderbook") // Nanti JS stream_injector akan klik tombol stream
+            } catch (_: Exception) {}
+        }, 14000L)
 
         handler.post(sessionTimerRunnable)
         handler.postDelayed(scrapingRunnable, 5000L)
@@ -241,12 +262,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun initServices() {
         yahooRepo = YahooFinanceRepository()
-        orderBookRepo = OrderBookRepository(applicationContext, yahooRepo)
+        stockbitCandleRepo = com.scalping.assistant.data.repository.StockbitCandleRepository(applicationContext, yahooRepo)
+        orderBookRepo = OrderBookRepository(applicationContext, yahooRepo, stockbitCandleRepo)
 
         loadPortfolioFromPrefs()
 
         val prefs = getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
         stockbitAuthToken = prefs.getString(PREF_STOCKBIT_TOKEN, "") ?: ""
+        // Tolak token basi sejak awal agar header tidak klaim ADA palsu.
+        if (stockbitAuthToken.isNotEmpty() && isExpiredJwt(stockbitAuthToken)) {
+            stockbitAuthToken = ""
+            prefs.edit().remove(PREF_STOCKBIT_TOKEN).apply()
+            Log.w("BANDAR_NATIVE", "Token simpanan expired saat start — dihapus, perlu login ulang")
+        }
         isCutLossAlarmMuted = prefs.getBoolean("pref_mute_cutloss_alarm", false)
         if (stockbitAuthToken.isNotEmpty()) {
             Log.d("BANDAR_NATIVE", "Loaded saved Stockbit token (${stockbitAuthToken.take(8)}...)")
@@ -752,9 +780,14 @@ class MainActivity : AppCompatActivity() {
             return fromCookie
         }
 
-        // 2. Gunakan token di memori atau prefs jika valid
-        if (stockbitAuthToken.startsWith("eyJ") && stockbitAuthToken.length > 80) {
+        // 2. Gunakan token di memori atau prefs jika valid & belum expired
+        if (stockbitAuthToken.startsWith("eyJ") && stockbitAuthToken.length > 80 && !isExpiredJwt(stockbitAuthToken)) {
             return stockbitAuthToken
+        }
+        // Token memori basi → bersihkan agar header tidak klaim ADA palsu.
+        if (stockbitAuthToken.isNotEmpty() && isExpiredJwt(stockbitAuthToken)) {
+            stockbitAuthToken = ""
+            getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE).edit().remove(PREF_STOCKBIT_TOKEN).apply()
         }
 
         return ""
@@ -769,12 +802,12 @@ class MainActivity : AppCompatActivity() {
                 val match = Regex(""""token":"([^"]+)"""").find(decoded)
                 if (match != null) {
                     val cand = match.groupValues[1]
-                    if (cand.startsWith("eyJ") && cand.length > 80) {
+                    if (cand.startsWith("eyJ") && cand.length > 80 && !isExpiredJwt(cand)) {
                         return cand
                     }
                 }
                 val jwtMatch = Regex("""eyJ[a-zA-Z0-9_-]{15,}\.[a-zA-Z0-9_-]{15,}\.[a-zA-Z0-9_-]{15,}""").find(decoded)
-                if (jwtMatch != null && jwtMatch.value.length > 80) {
+                if (jwtMatch != null && jwtMatch.value.length > 80 && !isExpiredJwt(jwtMatch.value)) {
                     return jwtMatch.value
                 }
             }
@@ -784,10 +817,57 @@ class MainActivity : AppCompatActivity() {
         return ""
     }
 
+    /** Cek exp JWT sama seperti repo — true bila sudah lewat. */
+    private fun isExpiredJwt(jwt: String): Boolean {
+        return try {
+            val parts = jwt.split(".")
+            if (parts.size < 2) return false
+            var payload = parts[1]
+            val rem = payload.length % 4
+            if (rem > 0) payload += "=".repeat(4 - rem)
+            val json = org.json.JSONObject(String(android.util.Base64.decode(payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)))
+            val exp = json.optLong("exp", 0L)
+            if (exp == 0L) return false
+            exp < System.currentTimeMillis() / 1000 - 30
+        } catch (_: Exception) { false }
+    }
+
+    /** Ambil klaim exp JWT (detik) — 0 bila tidak ada. Dipakai cegah flip-flop token basi. */
+    private fun getJwtExpSec(jwt: String): Long {
+        return try {
+            val parts = jwt.split(".")
+            if (parts.size < 2) return 0L
+            var payload = parts[1]
+            val rem = payload.length % 4
+            if (rem > 0) payload += "=".repeat(4 - rem)
+            val json = org.json.JSONObject(String(android.util.Base64.decode(payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)))
+            json.optLong("exp", 0L)
+        } catch (_: Exception) { 0L }
+    }
+
     fun triggerTokenExtraction() {
         runOnUiThread {
             if (!::webView.isInitialized) return@runOnUiThread
             getActiveStockbitToken()
+        }
+    }
+
+    /** Buka chart Stockbit di browser luar (Chrome) agar tidak putih di WebView orderbook. */
+    fun openStockbitChartExternal(ticker: String) {
+        try {
+            val clean = ticker.trim().uppercase().takeIf { it.isNotEmpty() } ?: return
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://stockbit.com/symbol/$clean")).apply {
+                // Paksa Chrome — jangan aplikasi Stockbit (deep-link bikin terlempar & sesi beda).
+                setPackage("com.android.chrome")
+            }
+            try {
+                startActivity(intent)
+            } catch (_: Exception) {
+                // Chrome tidak ada → fallback browser default apa saja.
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://stockbit.com/symbol/$clean")))
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal buka chart: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -820,12 +900,16 @@ class MainActivity : AppCompatActivity() {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            databaseEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
             useWideViewPort = true
             loadWithOverviewMode = true
             setSupportMultipleWindows(true)
             javaScriptCanOpenWindowsAutomatically = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            allowFileAccess = true
+            allowContentAccess = true
+            mediaPlaybackRequiresUserGesture = false
             userAgentString = customUserAgent
         }
 
@@ -934,14 +1018,52 @@ class MainActivity : AppCompatActivity() {
         }
         webViewStream.addJavascriptInterface(streamBridge, "AndroidStream")
 
+        var lastXhr401Url = ""
+        var lastXhr401Time = 0L
         val probeBridge = object {
             @android.webkit.JavascriptInterface
             fun onProbeCaptured(type: String, url: String, payload: String) {
+                // Filter AGRESIF: log hanya untuk hal penting agar ADA/KEDALUWARSA & CANDLE tidak tenggelam.
+                // Yang disimpan: TOKEN, PROBE_READY, WS_CONNECT, FETCH/XHR berisi history/token/401/UNAUTHORIZED/marketdetectors.
+                // Yang DIBUANG: semua WS_SEND/WS_MSG (orderbook socket wss-jkt/wssocial), crisp.chat, primus ping/pong,
+                // XHR notif/paywall/broker yang tidak ada hubungannya dengan candle.
+                val lowUrl = url.lowercase()
+                val lowPay = payload.lowercase()
+                if (lowUrl.contains("crisp.chat")) return
+                if (lowUrl.contains("primus")) return
+                if (type == "WS_SEND" || type == "WS_MSG") return
+                if (type == "WS_CONNECT" && (lowUrl.contains("wss-jkt") || lowUrl.contains("wssocial"))) {
+                    // CONNECT orderbook tiap detik = noise, buang kecuali 1x per menit — sederhananya buang semua.
+                    return
+                }
+                val isAuthFail = lowPay.contains("unauthorized") || lowPay.contains("kedaluwarsa")
+                val isChartRelated = lowUrl.contains("history") || lowUrl.contains("marketdetectors") || lowUrl.contains("chart") || lowUrl.contains("candle") || lowUrl.contains("udf") || lowUrl.contains("tradingview") || lowUrl.contains("token")
+                // Ringkas 401 polling non-chart (broker/top, notif, paywall tiap detik): simpan 1x per URL per 60 dtk tanpa payload penuh.
+                if (isAuthFail && !isChartRelated && (type == "FETCH_DATA" || type == "XHR_DATA")) {
+                    val nowMs = System.currentTimeMillis()
+                    if (url == lastXhr401Url && (nowMs - lastXhr401Time) < 60_000) return
+                    lastXhr401Url = url
+                    lastXhr401Time = nowMs
+                    Log.d("PROBE_STREAM", "[$type] $url -> 401 kedaluwarsa (ringkas)")
+                    val ts0 = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                    synchronized(probeLogs) {
+                        if (probeLogs.size >= 60) probeLogs.removeAt(0)
+                        probeLogs.add("[$ts0] [$type] $url\nPayload: (401 Akses token kedaluwarsa — polling, disembunyikan)")
+                    }
+                    return
+                }
+                val isImportantFetch = (type == "FETCH_DATA" || type == "XHR_DATA") &&
+                    (isChartRelated || isAuthFail || type.contains("TOKEN"))
+                val isLifecycle = type == "PROBE_READY" || type == "TOKEN" || type.startsWith("CANDLE")
+                if (!isImportantFetch && !isLifecycle) {
+                    // Buang XHR notif count, broker/top, paywall, market-time, dll yang bukan candle.
+                    if (type == "FETCH_DATA" || type == "XHR_DATA" || type.startsWith("SSE_")) return
+                }
                 Log.d("PROBE_STREAM", "[$type] $url -> $payload")
                 val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
                 val logEntry = "[$timestamp] [$type] $url\nPayload: $payload"
                 synchronized(probeLogs) {
-                    if (probeLogs.size >= 30) probeLogs.removeAt(0)
+                    if (probeLogs.size >= 60) probeLogs.removeAt(0)
                     probeLogs.add(logEntry)
                 }
 
@@ -949,7 +1071,9 @@ class MainActivity : AppCompatActivity() {
                     orderBookRepo.processBandarDetectorJson(url, payload)
                 }
 
-                if (type.startsWith("WS_") || type.startsWith("SSE_") || type.startsWith("FETCH_") || type.startsWith("XHR_")) {
+                // tvStatusLog JANGAN ditimpa WS noise — hanya update untuk TOKEN/CANDLE/401/CONNECT penting.
+                if (type == "TOKEN" || type.startsWith("CANDLE") || type == "PROBE_READY" ||
+                    ((type == "FETCH_DATA" || type == "XHR_DATA") && (url.contains("history") || payload.lowercase().contains("unauthorized")))) {
                     runOnUiThread {
                         val shortUrl = if (url.length > 25) url.takeLast(25) else url
                         val preview = if (payload.length > 40) payload.take(40) + "..." else payload
@@ -961,13 +1085,33 @@ class MainActivity : AppCompatActivity() {
             @android.webkit.JavascriptInterface
             fun onTokenCaptured(token: String) {
                 val clean = if (token.startsWith("Bearer ", ignoreCase = true)) token.substring(7).trim() else token.trim()
-                if (clean.startsWith("eyJ") && clean.length > 80 && clean != stockbitAuthToken) {
+                if (clean.startsWith("eyJ") && clean.length > 80) {
+                    // Jangan simpan JWT yang sudah expired — langsung tolak agar badge jujur DLY.
+                    if (isExpiredJwt(clean)) {
+                        Log.w("BANDAR_NATIVE", "JWT ketangkap tapi sudah expired (len ${clean.length}) — diabaikan")
+                        return
+                    }
+                    if (clean == stockbitAuthToken) return
+                    // Cegah flip-flop len 831 vs 852: hanya simpan bila exp-nya lebih baru dari yang tersimpan.
+                    val cur = stockbitAuthToken
+                    if (cur.startsWith("eyJ") && cur.length > 80 && !isExpiredJwt(cur)) {
+                        if (getJwtExpSec(clean) <= getJwtExpSec(cur)) {
+                            Log.d("BANDAR_NATIVE", "JWT ketangkap tapi lebih basi dari tersimpan — diabaikan")
+                            return
+                        }
+                    }
                     stockbitAuthToken = clean
                     getSharedPreferences("ScalpingPrefs", Context.MODE_PRIVATE)
                         .edit()
                         .putString(PREF_STOCKBIT_TOKEN, clean)
                         .apply()
                     Log.d("BANDAR_NATIVE", "🔑 onTokenCaptured: tersimpan JWT (${clean.take(8)}... len: ${clean.length})")
+                    val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                    synchronized(probeLogs) {
+                        if (probeLogs.size >= 60) probeLogs.removeAt(0)
+                        probeLogs.add("[$ts] [TOKEN] Stockbit JWT ketangkap (len ${clean.length}) — candle berikutnya via STOCKBIT 🟢")
+                    }
+                    runOnUiThread { tvStatusLog.text = "🔑 Token Stockbit OK (len ${clean.length}) — candle berikutnya 🟢 LIVE (Tap log)" }
                 }
             }
         }
@@ -1011,7 +1155,11 @@ class MainActivity : AppCompatActivity() {
                 if (streamProbeScript.isNotEmpty()) {
                     view.evaluateJavascript(streamProbeScript, null)
                 }
-                if (injectorScript.isNotEmpty()) {
+                // Scraper orderbook hanya untuk halaman orderbook. Di /symbol & /chart
+                // chart TradingView butuh render bersih tanpa diobok-obok tiap load.
+                val isChartPage = url.contains("/symbol", ignoreCase = true) ||
+                        url.contains("/chart", ignoreCase = true)
+                if (!isChartPage && injectorScript.isNotEmpty()) {
                     view.evaluateJavascript(injectorScript, null)
                 }
                 if (url.contains("stockbit.com") && !url.contains("/login")) {
@@ -1039,54 +1187,12 @@ class MainActivity : AppCompatActivity() {
                 isUserGesture: Boolean,
                 resultMsg: android.os.Message?
             ): Boolean {
-                val dialog = android.app.Dialog(this@MainActivity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-                val popupWebView = WebView(this@MainActivity).apply {
-                    settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        setSupportMultipleWindows(true)
-                        javaScriptCanOpenWindowsAutomatically = true
-                        userAgentString = customUserAgent
-                    }
-                    android.webkit.CookieManager.getInstance().setAcceptCookie(true)
-                    android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(v: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
-                            val targetUrl = request?.url?.toString() ?: ""
-                            if (targetUrl.contains("stockbit.com") && !targetUrl.contains("accounts.google.com")) {
-                                webView.loadUrl(targetUrl)
-                                dialog.dismiss()
-                                return true
-                            }
-                            return false
-                        }
-
-                        override fun onPageFinished(v: WebView?, url: String?) {
-                            super.onPageFinished(v, url)
-                            android.webkit.CookieManager.getInstance().flush()
-                            if (url != null && url.contains("stockbit.com") && !url.contains("accounts.google.com") && !url.contains("/login")) {
-                                dialog.dismiss()
-                                webView.reload()
-                            }
-                        }
-                    }
-
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onCloseWindow(window: WebView?) {
-                            dialog.dismiss()
-                            webView.reload()
-                        }
-                    }
-                }
-
-                dialog.setContentView(popupWebView)
-                dialog.show()
-
-                val transport = resultMsg?.obj as? WebView.WebViewTransport
-                transport?.webView = popupWebView
-                resultMsg?.sendToTarget()
-                return true
+                // POPUP DIMATIKAN TOTAL (02:31): chart TradingView terlalu berat untuk
+                // WebView kedua di RAM HP — tiap dibuka selalu OOM / force close.
+                // return false = WebView JANGAN buat popup; link target=_blank dibiarkan
+                // ditangani shouldOverrideUrlLoading / browser luar (Chrome).
+                try { resultMsg?.sendToTarget() } catch (_: Exception) {}
+                return false
             }
         }
 
@@ -1274,30 +1380,113 @@ class MainActivity : AppCompatActivity() {
     private fun showProbeLogDialog() {
         val items = synchronized(probeLogs) { probeLogs.reversed().toTypedArray() }
         val (tickers, snaps) = if (::orderBookRepo.isInitialized) orderBookRepo.getSnapshotCacheInfo() else Pair(0, 0)
+        val rawToken = stockbitAuthToken
+        val expired = rawToken.isNotEmpty() && isExpiredJwt(rawToken)
+        val hasToken = rawToken.startsWith("eyJ") && rawToken.length > 80 && !expired
+        val expLabel = if (rawToken.startsWith("eyJ") && rawToken.length > 80) getJwtExpLabel(rawToken) else "-"
+        val tokenLine = when {
+            hasToken -> "🔑 Token Stockbit: ADA (len ${rawToken.length}, exp $expLabel) → candle via STOCKBIT 🟢"
+            expired -> "🔑 Token Stockbit: KEDALUWARSA (len ${rawToken.length}, exp $expLabel) → logout/login ulang di WebView atas, sementara via Yahoo 🟡"
+            else -> "🔑 Token Stockbit: BELUM ADA → login di WebView atas, lalu candle masih via Yahoo 🟡"
+        }
+        val header = "$tokenLine\n💾 Cache ($tickers emiten / $snaps data) • Tap Salin Semua untuk kirim log"
         val title = "📡 Live Probe (${items.size}) • 💾 Cache ($tickers emiten / $snaps data)"
 
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(title)
-            .setItems(if (items.isEmpty()) arrayOf("Belum ada data WebSocket/SSE/Fetch tertangkap.\nSilakan pastikan Stockbit sudah login.") else items, null)
-            .setPositiveButton("Tutup", null)
+            .setItems(if (items.isEmpty()) arrayOf("$header\n\nBelum ada data penting tertangkap (WS orderbook/chat sudah dibuang).\nStatus token lihat baris paling atas.\nTap 🧪 Tes Candle untuk cek realtime sekarang.") else arrayOf(header) + items, null)
+            .setPositiveButton("🧪 Tes Candle", null)
             .setNeutralButton("Salin Semua") { _, _ ->
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 val clip = android.content.ClipData.newPlainText("Probe Logs", items.joinToString("\n---\n"))
                 clipboard.setPrimaryClip(clip)
                 Toast.makeText(this, "Log disalin ke clipboard!", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("🗑️ Reset Snapshot") { _, _ ->
-                androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("Hapus Cache Snapshot?")
-                    .setMessage("Seluruh riwayat snapshot ($tickers emiten, $snaps data) akan dihapus dan sistem akan mengumpulkan data baru dari awal.")
-                    .setPositiveButton("Hapus") { _, _ ->
-                        orderBookRepo.clearAllSnapshots()
-                        Toast.makeText(this, "Cache snapshot telah di-reset!", Toast.LENGTH_SHORT).show()
+            .setNegativeButton("Tutup", null)
+            .create().also { dlg ->
+                dlg.setOnShowListener {
+                    dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+                        testCandleNow()
                     }
-                    .setNegativeButton("Batal", null)
-                    .show()
+                }
+                dlg.show()
             }
-            .show()
+    }
+
+    /** Label waktu exp JWT agar user langsung lihat ADA sampai kapan / basi sejak kapan. */
+    private fun getJwtExpLabel(jwt: String): String {
+        return try {
+            val parts = jwt.split(".")
+            if (parts.size < 2) return "-"
+            var payload = parts[1]
+            val rem = payload.length % 4
+            if (rem > 0) payload += "=".repeat(4 - rem)
+            val json = org.json.JSONObject(String(android.util.Base64.decode(payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)))
+            val exp = json.optLong("exp", 0L)
+            if (exp == 0L) return "-"
+            java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(exp * 1000))
+        } catch (_: Exception) { "-" }
+    }
+
+    /**
+     * Tes 1x fetch candle BBCA via endpoint chartbit (daily + intraday 15M) — hasilnya masuk
+     * log [CANDLE_TEST] biar ketahuan LIVE/DLY kenapa. Diuji dua timeframe sekaligus supaya
+     * terbukti apakah endpoint daily & intraday dua-duanya hidup, bukan cuma salah satu.
+     */
+    private fun testCandleNow() {
+        Toast.makeText(this, "🧪 Tes candle BBCA (daily + intraday)...", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val token = getActiveStockbitToken()
+                val expLbl = if (token.startsWith("eyJ")) getJwtExpLabel(token) else "-"
+                val tokenState = when {
+                    token.isEmpty() -> "KOSONG (BELUM LOGIN)"
+                    isExpiredJwt(token) -> "KEDALUWARSA len=${token.length} exp=$expLbl"
+                    else -> "ADA len=${token.length} exp=$expLbl"
+                }
+
+                // Hapus cache BBCA dulu agar tes selalu fetch fresh (tidak kena cache 60 detik).
+                try { stockbitCandleRepo.clearCacheFor("BBCA") } catch (_: Exception) {}
+
+                val tfDaily = com.scalping.assistant.data.repository.CandleTimeframe.BULAN3
+                val tfIntraday = com.scalping.assistant.data.repository.CandleTimeframe.INTRADAY
+
+                val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                val lines = mutableListOf<String>()
+                lines.add("[$ts] [CANDLE_TEST] token=$tokenState")
+
+                // Uji endpoint DAILY (candle harian) lalu INTRADAY (per-menit → diagregasi 15M).
+                for (tf in listOf(tfDaily, tfIntraday)) {
+                    val before = System.currentTimeMillis()
+                    val series = try {
+                        stockbitCandleRepo.fetchSeries("BBCA", tf, withVolume = false)
+                    } catch (e: Exception) {
+                        Log.e("CANDLE_TEST", "fetch error ${tf.label}: ${e.message}")
+                        com.scalping.assistant.data.repository.StockbitCandleRepository.CandleSeries(emptyList(), "?", "ERR:${e.message}")
+                    }
+                    val dt = System.currentTimeMillis() - before
+                    val diag = try {
+                        stockbitCandleRepo.getLastFetchDiag("BBCA", tf)
+                    } catch (_: Exception) { "-" }
+                    val badge = if (series.source == "STOCKBIT") "🟢 LIVE" else "🟡 DLY"
+                    lines.add(
+                        "  ${tf.label}: src=${series.source} n=${series.candles.size} ${dt}ms $badge | $diag"
+                    )
+                }
+
+                val entry = lines.joinToString("\n")
+                synchronized(probeLogs) {
+                    lines.forEach {
+                        if (probeLogs.size >= 60) probeLogs.removeAt(0)
+                        probeLogs.add(it)
+                    }
+                }
+                Log.d("CANDLE_TEST", entry)
+                runOnUiThread { tvStatusLog.text = lines.joinToString(" • ").take(130) + " (Tap log)" }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this@MainActivity, "Tes gagal: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
     }
 
     private fun updateTotalCount() {

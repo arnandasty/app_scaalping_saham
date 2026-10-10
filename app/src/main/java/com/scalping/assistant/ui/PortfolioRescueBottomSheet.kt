@@ -86,10 +86,12 @@ class PortfolioRescueBottomSheet(
         val ctx = requireContext()
         val key = AiConfig.apiKey(ctx)
 
-        // Hanya Groq yang benar-benar butuh API Key. 9Router (default) boleh tanpa key,
-        // jadi jangan memblokir analisis hanya karena kolom key kosong.
-        if (key.isBlank() && AiConfig.baseUrl(ctx).contains("groq.com", ignoreCase = true)) {
-            tvRescueContent.text = "⚠️ API Key Groq belum disetel. Buka detail saham mana saja lalu isi di tombol ⚙️ API Key."
+        // API Key wajib kecuali 9Router lokal tanpa auth (logika sama dengan DetailBottomSheet).
+        val base = AiConfig.baseUrl(ctx)
+        val isLocal9Router = base.contains(":20128") || base.contains("192.168.") ||
+            base.contains("10.0.2.2") || base.contains("localhost")
+        if (key.isBlank() && !isLocal9Router) {
+            tvRescueContent.text = "⚠️ API Key TokenHarbor belum disetel. Buka detail saham mana saja lalu isi di tombol ⚙️ API Key."
             tvRescueContent.setTextColor(Color.parseColor("#EF4444"))
             return
         }

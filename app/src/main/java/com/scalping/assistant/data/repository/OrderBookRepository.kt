@@ -68,7 +68,8 @@ data class PortfolioTrade(
 
 class OrderBookRepository(
     private val context: android.content.Context,
-    private val yahooRepo: YahooFinanceRepository
+    private val yahooRepo: YahooFinanceRepository,
+    private val stockbitRepo: StockbitCandleRepository? = null
 ) {
 
     private val MAX_SNAPSHOT_HISTORY = 40 // Naikkan dari 30 ke 40 untuk sinyal lebih kuat
@@ -83,6 +84,9 @@ class OrderBookRepository(
     // Cache harga penutupan kemarin (prev close) per ticker — sumber referensi tunggal
     // untuk menghitung changePercent agar tidak terjadi floating-point drift yang menyebabkan harga loncat
     private val prevClosePriceCache = ConcurrentHashMap<String, Double>()
+
+    /** Sumber candle intraday aktual per ticker ("STOCKBIT" / "YAHOO") — dibaca adapter untuk badge kartu. */
+    private val candleSourceMap = ConcurrentHashMap<String, String>()
     
     // Coroutine Scope & Persistence State
     private val repoScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
@@ -1581,7 +1585,7 @@ class OrderBookRepository(
                             if ((cachedTech == null || cacheAge > 180_000L) && technicalFetchInFlight.putIfAbsent(ticker, true) == null) {
                                 repoScope.launch(Dispatchers.IO) {
                                     try {
-                                        val candles = yahooRepo.fetchIntradayCandles(ticker)
+                                        val candles = fetchCandlesPreferred(ticker)
                                         if (candles.isNotEmpty()) {
                                             val res = TechnicalAnalyzer.analyze(ticker, candles, priceToUse.toDouble())
                                             technicalCache[ticker] = res
@@ -1896,7 +1900,7 @@ class OrderBookRepository(
             if ((cachedTech == null || cacheAge > 180_000L) && technicalFetchInFlight.putIfAbsent(ticker, true) == null) {
                 repoScope.launch(Dispatchers.IO) {
                     try {
-                        val candles = yahooRepo.fetchIntradayCandles(ticker)
+                        val candles = fetchCandlesPreferred(ticker)
                         if (candles.isNotEmpty()) {
                             val res = TechnicalAnalyzer.analyze(ticker, candles, snap.lastPrice.toDouble())
                             technicalCache[ticker] = res
@@ -1931,4 +1935,28 @@ class OrderBookRepository(
 
         return analyses
     }
+
+    /**
+     * Ambil candle dengan prioritas: Stockbit 0-delay (jika login) -> Yahoo fallback.
+     * Dipakai pipeline Scalping (intraday 15m). Stockbit repo sudah internal fallback ke Yahoo.
+     */
+    private suspend fun fetchCandlesPreferred(ticker: String): List<com.scalping.assistant.data.models.Candle> {
+        val data = try {
+            if (stockbitRepo != null && stockbitRepo.isStockbitLoggedIn()) {
+                stockbitRepo.fetchIntradayCandles(ticker)
+            } else {
+                yahooRepo.fetchIntradayCandles(ticker)
+            }
+        } catch (_: Exception) {
+            yahooRepo.fetchIntradayCandles(ticker)
+        }
+        // Catat sumber aktual per ticker untuk badge di kartu Manual/Movers/Top Picks.
+        candleSourceMap[ticker.trim().uppercase()] =
+            stockbitRepo?.getCandleSource(ticker, CandleTimeframe.INTRADAY) ?: "YAHOO"
+        return data
+    }
+
+    /** Sumber candle intraday terakhir per ticker ("STOCKBIT" / "YAHOO") — dibaca adapter untuk badge. */
+    fun getCandleSource(ticker: String): String =
+        candleSourceMap[ticker.trim().uppercase()] ?: "YAHOO"
 }

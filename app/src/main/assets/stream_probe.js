@@ -17,6 +17,18 @@
         } catch(e) {}
     }
 
+    function jwtExpMs(jwt) {
+        try {
+            if (!jwt || typeof jwt !== 'string') return 0;
+            var parts = jwt.split('.');
+            if (parts.length < 2) return 0;
+            var b = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            while (b.length % 4) b += '=';
+            var json = JSON.parse(atob(b));
+            return (json.exp || 0) * 1000;
+        } catch (e) { return 0; }
+    }
+
     function captureToken(raw) {
         if (!raw || typeof raw !== 'string') return;
         var t = raw.trim();
@@ -24,17 +36,37 @@
             t = t.substring(7).trim();
         }
         if (t.length > 20) {
+            // Cegah token basi (mis. header fetch pakai token lama) menimpa token bagus:
+            // hanya teruskan bila exp-nya lebih lama dari yang terakhir dikirim.
+            try {
+                var e = jwtExpMs(t);
+                var lastE = jwtExpMs(window._lastSentToken || '');
+                if (window._lastSentToken && e <= lastE) return;
+                window._lastSentToken = t;
+            } catch (ign) {}
             if (window.AndroidProbe && window.AndroidProbe.onTokenCaptured) {
                 window.AndroidProbe.onTokenCaptured(t);
             }
         }
     }
 
-    // 0. Auto-scan localStorage & sessionStorage untuk capture token otentikasi Stockbit
+    // 0. Auto-scan localStorage & sessionStorage — kumpulkan SEMUA kandidat JWT,
+    // lalu kirim hanya yang exp-nya paling lama (ter-fresh). Jangan kirim yang pertama
+    // ketemu karena bisa jadi token basi menimpa token bagus (kasus len 831 nimpa 852).
     function scanStoragesForToken() {
         try {
             var storages = [localStorage, sessionStorage];
             var allKeys = [];
+            var best = null;
+            var bestExp = 0;
+            var consider = function(cand) {
+                if (!cand || typeof cand !== 'string') return;
+                var t = cand.trim().replace(/^["']|["']$/g, '');
+                if (t.toLowerCase().indexOf('bearer ') === 0) t = t.substring(7).trim();
+                if (!/^eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/.test(t)) return;
+                var e = jwtExpMs(t);
+                if (e > bestExp) { bestExp = e; best = t; }
+            };
             for (var s = 0; s < storages.length; s++) {
                 var st = storages[s];
                 if (!st) continue;
@@ -45,14 +77,12 @@
                     var val = st.getItem(k);
                     if (!val || typeof val !== 'string') continue;
 
-                    // 1. Cek pola standar JWT (eyJ...)
-                    var jwtMatch = val.match(/eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/);
-                    if (jwtMatch && jwtMatch[0]) {
-                        captureToken(jwtMatch[0]);
-                        return;
-                    }
+                    // 1. Semua pola JWT di value (bisa lebih dari 1)
+                    var re = /eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g;
+                    var m;
+                    while ((m = re.exec(val)) !== null) { consider(m[0]); }
 
-                    // 2. Cek JSON jika ada field token/accessToken
+                    // 2. Field JSON token/accessToken
                     var lk = k.toLowerCase();
                     if (lk.indexOf('token') >= 0 || lk.indexOf('auth') >= 0 || lk.indexOf('user') >= 0 || lk.indexOf('session') >= 0) {
                         if (val.charAt(0) === '{' || val.charAt(0) === '[') {
@@ -63,29 +93,39 @@
                                     var a = typeof parsed.auth === 'string' ? JSON.parse(parsed.auth) : parsed.auth;
                                     cand = a.token || a.accessToken || a.access_token;
                                 }
-                                if (cand && typeof cand === 'string' && cand.length > 20) {
-                                    captureToken(cand);
-                                    return;
-                                }
-                            } catch(err) {}
+                                if (cand) consider(cand);
+                            } catch (err) {}
                         } else if (val.length > 20 && !val.startsWith('http')) {
-                            captureToken(val.replace(/^["']|["']$/g, ''));
-                            return;
+                            consider(val);
                         }
                     }
                 }
+            }
+            // Hanya kirim yang ter-fresh, dan hanya bila beda dari yang terakhir dikirim
+            // agar token basi tidak flip-flop menimpa token bagus.
+            if (best && best !== window._lastSentToken) {
+                window._lastSentToken = best;
+                captureToken(best);
             }
             if (allKeys.length > 0 && !window._loggedLSKeys) {
                 window._loggedLSKeys = true;
                 sendToAndroid('LS_KEYS', window.location.host, allKeys.join(', '));
             }
-        } catch(e) {}
+        } catch (e) {}
     }
 
     scanStoragesForToken();
     setInterval(scanStoragesForToken, 3000);
 
-    // 1. Intercept WebSocket (WSS)
+    // 1. Intercept WebSocket (WSS) — ABAIKAN socket orderbook/chat agar log tidak banjir.
+    // Hanya teruskan WS yang berpotensi berisi candle/token (history/chart/stream penting tidak pakai WS).
+    function isNoisyWs(url) {
+        if (!url) return true;
+        var u = url.toLowerCase();
+        return u.indexOf('wss-jkt') >= 0 || u.indexOf('wssocial') >= 0 ||
+               u.indexOf('crisp.chat') >= 0 || u.indexOf('primus') >= 0 ||
+               u.indexOf('sockjs') >= 0 || u.indexOf('socket.io') >= 0;
+    }
     if (typeof window.WebSocket !== 'undefined') {
         var OriginalWS = window.WebSocket;
         window.WebSocket = function(url, protocols) {
@@ -97,10 +137,11 @@
                     ws = new OriginalWS(url);
                 }
             } catch(err) {
-                sendToAndroid('WS_ERROR', url, err.message);
+                if (!isNoisyWs(url)) sendToAndroid('WS_ERROR', url, err.message);
                 throw err;
             }
 
+            if (isNoisyWs(url)) return ws; // diam total untuk orderbook/chat socket
             sendToAndroid('WS_CONNECT', url, 'Connecting...');
 
             ws.addEventListener('open', function() {
@@ -178,7 +219,7 @@
                 if (authH) captureToken(authH);
             } catch(e) {}
 
-            var isInteresting = /orderbook|running|trade|stream|market|quote|depth|ticker|marketdetectors/i.test(urlStr);
+            var isInteresting = /orderbook|running|trade|stream|market|quote|depth|ticker|marketdetectors|history|chart|candle|bars|udf|tradingview/i.test(urlStr);
 
             return origFetch.apply(this, arguments).then(function(response) {
                 if (isInteresting) {
@@ -216,7 +257,7 @@
 
         window.XMLHttpRequest.prototype.send = function() {
             var url = this._probeUrl || '';
-            var isInteresting = /orderbook|running|trade|stream|market|quote|depth|ticker|marketdetectors/i.test(url);
+            var isInteresting = /orderbook|running|trade|stream|market|quote|depth|ticker|marketdetectors|history|chart|candle|bars|udf|tradingview/i.test(url);
             if (isInteresting) {
                 this.addEventListener('load', function() {
                     sendToAndroid('XHR_DATA', url, this.responseText);

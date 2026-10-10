@@ -5,6 +5,46 @@
     android:background="@color/bg_panel"
     android:orientation="vertical">
 
+    <!-- Pencarian kode / nama saham: langsung menilai emiten yang dicari
+         (melewati filter preset), memakai bobot gaya trading yang aktif. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="6dp">
+
+        <EditText
+            android:id="@+id/etScreenerSearch"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_search_input"
+            android:drawableStart="@drawable/ic_search"
+            android:drawablePadding="10dp"
+            android:hint="Cari kode / nama saham (mis. BBCA, bank)"
+            android:imeOptions="actionSearch"
+            android:inputType="textCapCharacters"
+            android:maxLines="1"
+            android:paddingHorizontal="12dp"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_muted"
+            android:textSize="13sp" />
+
+        <ImageView
+            android:id="@+id/tvScreenerSearchClear"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_search_input"
+            android:contentDescription="Hapus pencarian"
+            android:padding="12dp"
+            android:src="@drawable/ic_close"
+            android:visibility="gone" />
+    </LinearLayout>
+
     <!-- Baris gaya trading: pilihan paling atas karena menentukan BOBOT skor
          (daytrade menekankan likuiditas & aliran dana, swing menekankan tren)
          sekaligus menentukan preset penyaring apa saja yang tersedia. -->
@@ -12,10 +52,8 @@
         android:id="@+id/svScreenerStyles"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/bg_card"
-        android:paddingHorizontal="8dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="4dp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="4dp"
         android:scrollbars="none">
 
         <LinearLayout
@@ -31,27 +69,26 @@
         android:id="@+id/svScreenerPresets"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/bg_card"
-        android:paddingHorizontal="8dp"
-        android:paddingVertical="6dp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="4dp"
         android:scrollbars="none">
 
         <LinearLayout
             android:id="@+id/llScreenerPresets"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:gravity="center_vertical"
             android:orientation="horizontal" />
     </HorizontalScrollView>
 
-    <!-- Baris pemilih timeframe: M15 (intraday) / 1BL / 3BL / 6BL (dalam bulan).
+    <!-- Baris pemilih timeframe: 15M (intraday) / 1BL / 3BL / 6BL (dalam bulan).
          Fibonacci & struktur pasar dihitung ulang sesuai timeframe yang dipilih.
-         Dibuat bisa digeser karena 4 chip + keterangan horizon bisa melebihi lebar layar. -->
+         Dibuat bisa digeser karena chip + keterangan horizon bisa melebihi lebar layar. -->
     <HorizontalScrollView
         android:id="@+id/svScreenerTimeframes"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/bg_panel"
-        android:paddingHorizontal="8dp"
+        android:paddingHorizontal="12dp"
         android:paddingVertical="4dp"
         android:scrollbars="none">
 
@@ -63,68 +100,30 @@
             android:orientation="horizontal" />
     </HorizontalScrollView>
 
-    <!-- Catatan keterbatasan data -->
+    <!-- Catatan keterbatasan data: diringkas 2 baris, ketuk untuk membuka penuh. -->
     <TextView
         android:id="@+id/tvScreenerNotice"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="5dp"
-        android:text="⚠️ Skor 0-100 dari Volume·Bandar·MACD·RSI·MA·Fibonacci·SMC·Struktur. Data IDX delay 10-15 mnt — untuk menyaring kandidat, bukan pemicu entry."
-        android:textColor="@color/signal_yellow"
-        android:textSize="10sp" />
-
-    <!-- Pencarian kode / nama saham: langsung menilai emiten yang dicari
-         (melewati filter preset), memakai bobot gaya trading yang aktif. -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@color/bg_card"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="8dp"
-        android:paddingVertical="6dp">
-
-        <EditText
-            android:id="@+id/etScreenerSearch"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:background="@drawable/bg_chip"
-            android:hint="🔍 Cari kode / nama saham (mis. BBCA, bank)"
-            android:imeOptions="actionSearch"
-            android:inputType="textCapCharacters"
-            android:maxLines="1"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="7dp"
-            android:textColor="@color/text_primary"
-            android:textColorHint="@color/text_muted"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/tvScreenerSearchClear"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:background="@drawable/bg_chip"
-            android:gravity="center"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="7dp"
-            android:text="✕"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp"
-            android:visibility="gone" />
-    </LinearLayout>
+        android:drawableStart="@drawable/ic_info"
+        android:drawablePadding="8dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
+        android:text="Skor 0-100 dari Volume, Bandar, MACD, RSI, MA, Fibonacci, SMC, Struktur. LIVE = candle Stockbit real-time, DLY = Yahoo tertunda ±10 mnt, SNAP = snapshot saja. Login Stockbit sekali di tab Manual untuk LIVE."
+        android:textColor="@color/text_muted"
+        android:textSize="11sp" />
 
     <!-- Penanda mode pencarian + progres unduh universe (268 KB sekali saja) -->
     <TextView
         android:id="@+id/tvScreenerSearchHint"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingHorizontal="12dp"
-        android:paddingBottom="4dp"
+        android:paddingHorizontal="14dp"
+        android:paddingBottom="6dp"
         android:textColor="@color/brand_accent"
-        android:textSize="10sp"
+        android:textSize="11sp"
         android:visibility="gone" />
 
     <!-- Progress -->
@@ -146,7 +145,8 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
-            android:paddingBottom="8dp" />
+            android:paddingTop="4dp"
+            android:paddingBottom="12dp" />
 
         <!-- Empty / status -->
         <LinearLayout
@@ -157,21 +157,22 @@
             android:orientation="vertical"
             android:padding="24dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="🔍"
-                android:textSize="32sp" />
+            <ImageView
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:alpha="0.6"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_search" />
 
             <TextView
                 android:id="@+id/tvScreenerEmptyMsg"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="12dp"
                 android:gravity="center"
                 android:text="Pilih preset di atas untuk menyaring kandidat dari 844 emiten IDX."
                 android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                android:textSize="13sp" />
         </LinearLayout>
     </FrameLayout>
 

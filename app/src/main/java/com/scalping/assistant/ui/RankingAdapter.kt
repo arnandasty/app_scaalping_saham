@@ -12,7 +12,9 @@ import com.scalping.assistant.data.models.Recommendation
 import com.scalping.assistant.data.models.StockAnalysis
 
 class RankingAdapter(
-    private val onItemClick: (StockAnalysis) -> Unit
+    private val onItemClick: (StockAnalysis) -> Unit,
+    /** Sumber candle per ticker ("STOCKBIT"/"YAHOO") — untuk badge LIVE/DLY di kartu. */
+    private val candleSourceProvider: (String) -> String = { "YAHOO" }
 ) : RecyclerView.Adapter<RankingAdapter.ViewHolder>() {
 
     private val items = mutableListOf<StockAnalysis>()
@@ -51,6 +53,7 @@ class RankingAdapter(
         private val chipBB: TextView = itemView.findViewById(R.id.chipBB)
         private val chipBandar: TextView = itemView.findViewById(R.id.chipBandar)
         private val tvPrimaryReason: TextView = itemView.findViewById(R.id.tvPrimaryReason)
+        private val tvFeedSource: TextView = itemView.findViewById(R.id.tvFeedSource)
 
         fun bind(item: StockAnalysis, rank: Int) {
             // Cek apakah ini mode BSJP
@@ -64,6 +67,15 @@ class RankingAdapter(
             }
 
             tvRank.text = "#$rank"
+
+            // Badge sumber candle intraday: LIVE = Stockbit 0-delay, DLY = Yahoo delay.
+            if (candleSourceProvider(item.ticker) == "STOCKBIT") {
+                tvFeedSource.text = "🟢 LIVE"
+                tvFeedSource.setTextColor(Color.parseColor("#10B981"))
+            } else {
+                tvFeedSource.text = "🟡 DLY"
+                tvFeedSource.setTextColor(Color.parseColor("#F59E0B"))
+            }
             
             val sign = if (item.changePercent > 0) "+" else ""
             val priceFormatted = formatPrice(item.lastPrice)

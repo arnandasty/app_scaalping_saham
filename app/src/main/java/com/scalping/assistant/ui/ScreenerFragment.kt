@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.ProgressBar
@@ -85,7 +86,7 @@ class ScreenerFragment : Fragment() {
     private lateinit var llTimeframes: LinearLayout
     private lateinit var pbLoading: ProgressBar
     private lateinit var etSearch: EditText
-    private lateinit var tvSearchClear: TextView
+    private lateinit var tvSearchClear: ImageView
     private lateinit var tvSearchHint: TextView
 
     private lateinit var adapter: ScreenerAdapter
@@ -136,9 +137,18 @@ class ScreenerFragment : Fragment() {
 
         // Pakai YahooFinanceRepository milik Activity agar cache candle dibagi —
         // emiten yang sudah pernah dianalisis pipeline utama tidak diunduh dua kali.
-        val yahooRepo = (activity as? com.scalping.assistant.MainActivity)?.yahooRepo
-            ?: YahooFinanceRepository()
-        repo = TradingViewScreenerRepository(yahooRepo)
+        // Jika user sudah login Stockbit, candle screener otomatis 0-delay (real-time).
+        val main = activity as? com.scalping.assistant.MainActivity
+        val yahooRepo = main?.yahooRepo ?: YahooFinanceRepository()
+        val stockbitRepo = try { main?.stockbitCandleRepo } catch (_: Exception) { null }
+        repo = TradingViewScreenerRepository(yahooRepo, stockbitRepo)
+
+        // Catatan data dilipat 2 baris agar tidak memakan layar; ketuk untuk membaca penuh.
+        view.findViewById<TextView>(R.id.tvScreenerNotice).let { notice ->
+            notice.setOnClickListener {
+                notice.maxLines = if (notice.maxLines == 2) Int.MAX_VALUE else 2
+            }
+        }
 
         buildStyleChips()
         buildPresetChips()
@@ -170,21 +180,10 @@ class ScreenerFragment : Fragment() {
         llStyles.removeAllViews()
         styleChips.clear()
 
-        llStyles.addView(TextView(requireContext()).apply {
-            text = "Gaya:"
-            textSize = 11f
-            setTextColor(Color.parseColor("#64748B"))
-            setPadding(0, 0, dp(8), 0)
-        })
+        llStyles.addView(rowLabel("Gaya"))
 
         for (style in TradingStyle.entries) {
-            val chip = TextView(requireContext()).apply {
-                text = style.label
-                textSize = 11f
-                setPadding(dp(12), dp(6), dp(12), dp(6))
-                gravity = Gravity.CENTER
-                setOnClickListener { onStyleSelected(style) }
-            }
+            val chip = filterChip(style.label) { onStyleSelected(style) }
             chip.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -197,25 +196,27 @@ class ScreenerFragment : Fragment() {
     }
 
     private fun updateStyleChipStyles() {
-        for ((style, chip) in styleChips) {
-            if (style == selectedStyle) {
-                chip.setBackgroundResource(R.drawable.bg_chip_active_blue)
-                chip.setTextColor(Color.parseColor("#FFFFFF"))
-            } else {
-                chip.setBackgroundResource(R.drawable.bg_chip)
-                chip.setTextColor(Color.parseColor("#94A3B8"))
-            }
-        }
+        for ((style, chip) in styleChips) setChipActive(chip, style == selectedStyle)
         // Tagline gaya aktif ditampilkan di baris petunjuk agar pengguna tahu bedanya.
         showStyleHint()
     }
 
     /** Baris petunjuk default: menjelaskan bobot gaya trading yang sedang aktif. */
     private fun showStyleHint() {
+        if (inSearchMode) return // jangan timpa keterangan pencarian yang sedang tampil
         tvSearchHint.visibility = View.VISIBLE
         tvSearchHint.text = "Gaya ${selectedStyle.label}: ${selectedStyle.tagline} · " +
             "bobot Volume ${selectedStyle.wVolume} · Bandar ${selectedStyle.wBandar} · " +
-            "MA ${selectedStyle.wMa} · Fib ${selectedStyle.wFib}"
+            "MA ${selectedStyle.wMa} · Fib ${selectedStyle.wFib} · ${feedStatusLabel()}"
+    }
+
+    /** Label status feed global: 🟢 bila sesi Stockbit kebaca, 🟡 bila fallback Yahoo. */
+    private fun feedStatusLabel(): String {
+        val loggedIn = try {
+            (activity as? com.scalping.assistant.MainActivity)?.stockbitCandleRepo?.isStockbitLoggedIn()
+        } catch (_: Exception) { null } ?: false
+        return if (loggedIn) "Feed LIVE (Stockbit)"
+        else "Feed DLY (login Stockbit di tab Manual untuk LIVE)"
     }
 
     /**
@@ -247,13 +248,7 @@ class ScreenerFragment : Fragment() {
         presetChips.clear()
 
         for (preset in ScreenerPreset.forStyle(selectedStyle)) {
-            val chip = TextView(requireContext()).apply {
-                text = preset.label
-                textSize = 11f
-                setPadding(dp(10), dp(6), dp(10), dp(6))
-                gravity = Gravity.CENTER
-                setOnClickListener { runScan(preset) }
-            }
+            val chip = filterChip(preset.label) { runScan(preset) }
             chip.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -266,15 +261,7 @@ class ScreenerFragment : Fragment() {
     }
 
     private fun updateChipStyles() {
-        for ((preset, chip) in presetChips) {
-            if (preset == selectedPreset) {
-                chip.setBackgroundResource(R.drawable.bg_chip_active_blue)
-                chip.setTextColor(Color.parseColor("#FFFFFF"))
-            } else {
-                chip.setBackgroundResource(R.drawable.bg_chip)
-                chip.setTextColor(Color.parseColor("#94A3B8"))
-            }
-        }
+        for ((preset, chip) in presetChips) setChipActive(chip, preset == selectedPreset)
     }
 
     // ============================================================
@@ -296,21 +283,10 @@ class ScreenerFragment : Fragment() {
         llTimeframes.removeAllViews()
         timeframeChips.clear()
 
-        llTimeframes.addView(TextView(requireContext()).apply {
-            text = "TF:"
-            textSize = 11f
-            setTextColor(Color.parseColor("#64748B"))
-            setPadding(0, 0, dp(8), 0)
-        })
+        llTimeframes.addView(rowLabel("TF"))
 
         for (tf in SCREENER_TIMEFRAMES) {
-            val chip = TextView(requireContext()).apply {
-                text = "${tf.label} · ${tf.horizon}"
-                textSize = 11f
-                setPadding(dp(12), dp(5), dp(12), dp(5))
-                gravity = Gravity.CENTER
-                setOnClickListener { onTimeframeSelected(tf) }
-            }
+            val chip = filterChip("${tf.label} · ${tf.horizon}") { onTimeframeSelected(tf) }
             chip.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -323,14 +299,38 @@ class ScreenerFragment : Fragment() {
     }
 
     private fun updateTimeframeChipStyles() {
-        for ((tf, chip) in timeframeChips) {
-            if (tf == selectedTimeframe) {
-                chip.setBackgroundResource(R.drawable.bg_chip_active_blue)
-                chip.setTextColor(Color.parseColor("#FFFFFF"))
-            } else {
-                chip.setBackgroundResource(R.drawable.bg_chip)
-                chip.setTextColor(Color.parseColor("#94A3B8"))
-            }
+        for ((tf, chip) in timeframeChips) setChipActive(chip, tf == selectedTimeframe)
+    }
+
+    /** Label baris ("Gaya", "TF") di ujung kiri baris chip. */
+    private fun rowLabel(label: String): TextView = TextView(requireContext()).apply {
+        text = label
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(Color.parseColor("#64748B"))
+        setPadding(0, 0, dp(10), 0)
+    }
+
+    /** Chip filter seragam: tinggi 36dp (area sentuh nyaman), teks 12sp. */
+    private fun filterChip(label: String, onClick: () -> Unit): TextView =
+        TextView(requireContext()).apply {
+            text = label
+            textSize = 12f
+            minHeight = dp(36)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), 0, dp(14), 0)
+            setOnClickListener { onClick() }
+        }
+
+    private fun setChipActive(chip: TextView, active: Boolean) {
+        if (active) {
+            chip.setBackgroundResource(R.drawable.bg_pill_active)
+            chip.setTextColor(Color.parseColor("#FFFFFF"))
+            chip.typeface = Typeface.DEFAULT_BOLD
+        } else {
+            chip.setBackgroundResource(R.drawable.bg_pill)
+            chip.setTextColor(Color.parseColor("#94A3B8"))
+            chip.typeface = Typeface.DEFAULT
         }
     }
 
@@ -576,7 +576,20 @@ class ScreenerFragment : Fragment() {
             text = "$company · ${stock.sector.ifEmpty { "—" }}\nGaya ${score.style.label} · TF ${score.timeframe.label} · $depth"
             textSize = 11f
             setTextColor(Color.parseColor("#64748B"))
-            setPadding(0, dp(3), 0, dp(8))
+            setPadding(0, dp(3), 0, dp(2))
+        })
+
+        container.addView(TextView(ctx).apply {
+            val (srcLabel, srcColor) = when (item.candleSource) {
+                com.scalping.assistant.data.repository.CandleSource.STOCKBIT -> "🟢 LIVE — candle Stockbit 0-delay (real-time)" to "#10B981"
+                com.scalping.assistant.data.repository.CandleSource.YAHOO -> "🟡 DLY — candle Yahoo delay ±10 menit" to "#F59E0B"
+                else -> "⚪ SNAP — snapshot TradingView (delay 10-15 mnt)" to "#94A3B8"
+            }
+            text = "Sumber candle: $srcLabel"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor(srcColor))
+            setPadding(0, dp(2), 0, dp(8))
         })
 
         // Satu baris per komponen: nama (kiri), poin (kanan), alasan (bawah, kecil).
@@ -638,10 +651,20 @@ class ScreenerFragment : Fragment() {
         }
 
         container.addView(TextView(ctx).apply {
-            text = "⚠️ Data TradingView delayed ± 10 menit. Skor ini untuk MENYARING kandidat, " +
-                "bukan pemicu entry. Harga & orderbook real-time tetap dari Stockbit."
+            val (footText, footColor) = when (item.candleSource) {
+                com.scalping.assistant.data.repository.CandleSource.STOCKBIT ->
+                    ("✅ Candle Stockbit 0-delay (real-time). Skor dihitung dari data live; " +
+                        "harga & orderbook real-time tetap dari Stockbit.") to "#10B981"
+                com.scalping.assistant.data.repository.CandleSource.YAHOO ->
+                    ("⚠️ Candle Yahoo delay ±10 menit. Skor ini untuk MENYARING kandidat, " +
+                        "bukan pemicu entry. Harga & orderbook real-time tetap dari Stockbit.") to "#F59E0B"
+                else ->
+                    ("⚠️ Data TradingView delayed ± 10 menit. Skor ini untuk MENYARING kandidat, " +
+                        "bukan pemicu entry. Harga & orderbook real-time tetap dari Stockbit.") to "#F59E0B"
+            }
+            text = footText
             textSize = 11f
-            setTextColor(Color.parseColor("#F59E0B"))
+            setTextColor(Color.parseColor(footColor))
             setPadding(0, dp(12), 0, 0)
         })
 

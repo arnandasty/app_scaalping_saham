@@ -84,6 +84,17 @@
             </LinearLayout>
         </LinearLayout>
 
+        <Button
+            android:id="@+id/btnOpenChart"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:layout_marginTop="10dp"
+            android:backgroundTint="#0EA5E9"
+            android:text="📈 Buka Chart Stockbit (Anti-Putih)"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
         <!-- Trading Plan Card -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"

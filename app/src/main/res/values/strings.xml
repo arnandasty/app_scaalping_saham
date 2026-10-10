@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Scalping AI Assistant</string>
+    <string name="app_name">Trading Assistant</string>
     <string name="market_session_title">Sesi Pasar</string>
     <string name="ai_ranking_title">AI Smart Ranking</string>
     <string name="live_badge">● LIVE</string>

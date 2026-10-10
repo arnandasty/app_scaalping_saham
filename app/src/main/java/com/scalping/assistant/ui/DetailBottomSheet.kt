@@ -140,6 +140,10 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
             requestAiAnalysis(tvAiSummary, layoutAiLoading, tvAiLoadingStatus, btnAskAi)
         }
 
+        view.findViewById<Button>(R.id.btnOpenChart)?.setOnClickListener {
+            (activity as? MainActivity)?.openStockbitChartExternal(item.ticker)
+        }
+
         val sign = if (item.changePercent > 0) "+" else ""
         val priceFormatted = formatPrice(item.lastPrice)
         detailTicker.text = "${item.ticker} Rp $priceFormatted ($sign${String.format("%.2f", item.changePercent)}%)"
@@ -372,9 +376,10 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
     /**
      * Dialog setelan AI: Base URL + API Key + Model.
      *
-     * Ketiganya sengaja bisa diubah dari HP supaya berpindah antara 9Router di PC (IP LAN),
-     * emulator (`10.0.2.2`), tunnel publik, atau Groq Cloud cukup lewat dialog ini tanpa
-     * build ulang. Nilai awal diambil dari [AiConfig].
+     * Default = TokenHarbor cloud (isi API Key thk_live_... sekali, langsung jalan
+     * via internet tanpa 9Router). Alternatif: 9Router di PC (IP LAN),
+     * emulator (`10.0.2.2`), tunnel publik, atau Groq Cloud — cukup lewat dialog
+     * ini tanpa build ulang. Nilai awal diambil dari [AiConfig].
      */
     private fun showAiSettingsDialog(onSaved: (() -> Unit)? = null) {
         val ctx = context ?: return
@@ -394,7 +399,7 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
 
         val inputBase = widget(AiConfig.DEFAULT_BASE_URL, currentBase)
         val inputModel = widget(AiConfig.DEFAULT_MODEL, currentModel)
-        val inputKey = widget("API Key (boleh kosong untuk 9Router)", currentKey)
+        val inputKey = widget("API Key TokenHarbor (thk_live_...)", currentKey)
 
         fun label(text: String) = TextView(ctx).apply {
             this.text = text
@@ -406,7 +411,7 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
         val container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 12, 48, 8)
-            addView(label("Base URL (9Router / OpenAI-compatible)"))
+            addView(label("Base URL (TokenHarbor / OpenAI-compatible)"))
             addView(inputBase)
             addView(label("Model"))
             addView(inputModel)
@@ -416,7 +421,7 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
 
         AlertDialog.Builder(ctx)
             .setTitle("⚙️ Konfigurasi Advisor AI")
-            .setMessage("Default: 9Router di PC via Wi-Fi yang sama (${AiConfig.DEFAULT_BASE_URL}).\nEmulator: ${AiConfig.EMULATOR_BASE_URL}.\nAPI Key boleh kosong bila 9Router tanpa auth.")
+            .setMessage("Default: TokenHarbor cloud + DeepSeek gratis (isi API Key thk_live_... di bawah).\nTanpa PC / tanpa 9Router — HP langsung via internet.\nAlternatif: 9Router (http://IP-PC:20128/v1), Emulator (${AiConfig.EMULATOR_BASE_URL}), Groq (${AiConfig.GROQ_BASE_URL}).")
             .setView(container)
             .setPositiveButton("Simpan") { _, _ ->
                 AiConfig.save(ctx, inputBase.text.toString(), inputKey.text.toString(), inputModel.text.toString())
@@ -424,9 +429,9 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
                 onSaved?.invoke()
             }
             .setNegativeButton("Batal", null)
-            .setNeutralButton("Buka 9Router") { _, _ ->
+            .setNeutralButton("Ambil Key Gratis") { _, _ ->
                 try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://localhost:20128")))
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://tokenharbor.ai")))
                 } catch (e: Exception) {
                     Toast.makeText(ctx, "Gagal membuka browser", Toast.LENGTH_SHORT).show()
                 }
@@ -496,9 +501,12 @@ class DetailBottomSheet(private var item: StockAnalysis) : BottomSheetDialogFrag
     ) {
         val ctx = requireContext()
         val key = AiConfig.apiKey(ctx)
-        // API Key hanya wajib untuk Groq Cloud. 9Router boleh tanpa key, jadi pengguna tidak
-        // dipaksa mengisi apa pun saat memakai model lokal.
-        if (key.isBlank() && AiConfig.baseUrl(ctx).contains("groq.com", ignoreCase = true)) {
+        // API Key wajib kecuali Base URL masih 9Router lokal tanpa auth. TokenHarbor
+        // & Groq Cloud selalu butuh key; bila kosong, buka dialog agar pengguna isi.
+        val base = AiConfig.baseUrl(ctx)
+        val isLocal9Router = base.contains(":20128") || base.contains("192.168.") ||
+            base.contains("10.0.2.2") || base.contains("localhost")
+        if (key.isBlank() && !isLocal9Router) {
             showAiSettingsDialog {
                 requestAiAnalysis(tvAiSummary, layoutAiLoading, tvAiLoadingStatus, btnAskAi)
             }
